@@ -1,0 +1,6 @@
+[animals]
+
+[animals.bison]
+east = "Bison_east.png"
+north = "Bison_north.png"
+south = "Bison_south.png"

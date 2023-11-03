@@ -1,0 +1,22 @@
+{
+    "files.associations": {
+        "g_game.h": "c",
+        "vk_private.h": "c",
+        "vk_system.h": "c",
+        "array": "c",
+        "deque": "c",
+        "list": "c",
+        "string": "c",
+        "vector": "c",
+        "string_view": "c",
+        "span": "c",
+        "*.glsl": "c",
+        "*.rh": "c",
+        "random": "c",
+        "chrono": "c",
+        "limits": "c",
+        "valarray": "c",
+        "algorithm": "c",
+        "semaphore": "c"
+    }
+}
