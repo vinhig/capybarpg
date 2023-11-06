@@ -17,6 +17,8 @@
         "limits": "c",
         "valarray": "c",
         "algorithm": "c",
-        "semaphore": "c"
+        "semaphore": "c",
+        "map": "c",
+        "format": "c"
     }
 }

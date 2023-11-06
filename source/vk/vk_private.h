@@ -31,21 +31,20 @@ typedef struct render_target_t {
 
 struct vk_system_t {
   VkPipeline pipeline;
-  VkDescriptorSet related_set;
-  VkPipelineLayout related_layout;
+
+  
 };
 
 typedef struct vk_ecs_t {
   VkDescriptorSetLayout instance_layout;
   VkDescriptorSet instance_set;
 
-  VkDescriptorSetLayout t_layout;
-  VkDescriptorSetLayout at_layout;
-  VkDescriptorSetLayout ts_layout;
+  VkDescriptorSetLayout ecs_layout;
+  VkDescriptorSet ecs_set;
 
-  VkDescriptorSet t_set;
-  VkDescriptorSet at_set;
-  VkDescriptorSet ts_set;
+  VkBuffer map_buffer;
+  VmaAllocation map_alloc;
+  void *map;
 
   VkBuffer e_buffer;
   VmaAllocation e_alloc;
@@ -76,14 +75,8 @@ typedef struct vk_ecs_t {
   VmaAllocation s_tmp_alloc;
   void *sprites;
 
-  VkPipelineLayout t_pipeline_layout;
-  VkPipeline t_pipeline;
-
-  VkPipelineLayout at_pipeline_layout;
-  VkPipeline at_pipeline;
-
-  VkPipelineLayout ts_pipeline_layout;
-  VkPipeline ts_pipeline;
+  VkPipelineLayout ecs_pipeline_layout;
+  VkPipeline ecs_pipeline;
 
   VkBuffer instance_buffer;
   VmaAllocation instance_alloc;
@@ -143,6 +136,10 @@ typedef struct vk_global_ubo_t {
   float min_depth;
   float max_depth;
   unsigned entity_count;
+
+  unsigned map_width;
+  unsigned map_height;
+  vec2 map_offset;
 } vk_global_ubo_t;
 
 struct vk_rend_t {
@@ -190,6 +187,7 @@ struct vk_rend_t {
 
   VkSampler nearest_sampler;
   VkSampler linear_sampler;
+  VkSampler anisotropy_sampler;
 
   vk_gbuffer_t *gbuffer;
   vk_ecs_t *ecs;

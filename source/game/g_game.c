@@ -19,12 +19,12 @@ game_t *G_CreateGame(client_t *client, char *base) {
   game_t *game = calloc(1, sizeof(game_t));
 
   // Add "path finding" system
-  VK_AddSystem_Agent_Transform(CL_GetRend(client), "model_matrix",
+  VK_AddSystem_Agent_Transform(CL_GetRend(client), "path_finding system",
                                "path_finding.comp.spv");
 
   // Add "model" system at the end, just compute the model matrix for each
   // transform
-  VK_AddSystem_Transform(CL_GetRend(client), "model_matrix",
+  VK_AddSystem_Transform(CL_GetRend(client), "model_matrix system",
                          "model_matrix_frustum.comp.spv");
 
   return game;
@@ -42,8 +42,9 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
   glm_mat4_identity(state.fps.view);
   // glm_ortho(-1.0 * ratio, 1.0* ratio, -1.0f, 1.0f , 0.01, 50.0,
   //           &state.fps.proj);
-  glm_ortho(-1.0 * ratio * 1.0f, 1.0 * ratio * 1.0f, -1.0f * 1.0f, 1.0f * 1.0f,
-            0.01, 50.0, &state.fps.view_proj);
+  float zoom = 0.2;
+  glm_ortho(-1.0 * ratio / zoom, 1.0 * ratio / zoom, -1.0f / zoom, 1.0f / zoom,
+            0.01, 50.0, (vec4 *)&state.fps.view_proj);
   // glm_ortho_default(ratio, &state.fps.view_proj);
 
   VK_TickSystems(CL_GetRend(client));
@@ -87,6 +88,7 @@ bool G_Load(client_t *client, game_t *game) {
 
   for (unsigned i = 0; i < 18; i++) {
     unsigned texture = rand() % 4 * 3;
+    
     struct Sprite sprite = {
         .current = texture,
         .texture_east = texture,
@@ -118,8 +120,8 @@ bool G_Load(client_t *client, game_t *game) {
     struct Transform transform = {
         .position =
             {
-                [0] = ((float)(rand() % 20) - 10.0f) / 10.0f - 2.0f,
-                [1] = ((float)(rand() % 20) - 10.0f) / 10.0f,
+                [0] = ((float)(rand() % 20) - 10.0f) / 5.0f,
+                [1] = ((float)(rand() % 20) - 10.0f) / 5.0f,
                 [2] = 0.0f,
                 [3] = 1.0f,
             },
@@ -145,9 +147,19 @@ void G_AddPawn(client_t *client, game_t *game, struct Transform *transform,
   unsigned entity =
       VK_Add_Entity(rend, transform_signature | model_transform_signature |
                               agent_signature | sprite_signature);
-  printf("Creating entity %d\n", entity);
+
+  struct Agent agent = {
+      .target =
+          {
+              [0] = 0.0f,
+              [1] = 0.0f,
+              [3] = 1.0f,
+          },
+      .speed = 1.0f,
+  };
+
   VK_Add_Transform(rend, entity, transform);
   VK_Add_Model_Transform(rend, entity, NULL);
-  VK_Add_Agent(rend, entity, NULL);
+  VK_Add_Agent(rend, entity, &agent);
   VK_Add_Sprite(rend, entity, sprite);
 }

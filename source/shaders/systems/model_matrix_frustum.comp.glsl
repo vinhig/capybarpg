@@ -4,15 +4,10 @@ layout(local_size_x = 16, local_size_y = 1, local_size_z = 1) in;
 
 #extension GL_GOOGLE_include_directive : enable
 
+#define SET 1
 #include "components.glsl"
 
-layout(std140, binding = 0) buffer Entities { uint entities[]; };
-
-layout(std140, binding = 1) buffer Transforms { Transform transform[]; };
-
-layout(std140, binding = 2) buffer ModelTransforms {
-  ModelTransform model_transform[];
-};
+#include "../global_ubo.glsl"
 
 mat4 translate(vec4 position) {
   // clang-format off
@@ -67,11 +62,9 @@ mat4 scale(vec4 s) {
 void main() {
   uint id = gl_GlobalInvocationID.x;
 
-  Transform the = transform[id];
+  Transform the = transforms[id];
 
-  transform[id].position.x += 0.03;
-
-  model_transform[id].model =
+  model_transforms[id].model =
       translate(the.position) * rotate_x(the.rotation.x) *
       rotate_y(the.rotation.y) * rotate_z(the.rotation.z) * scale(the.scale);
 }

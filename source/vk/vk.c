@@ -483,14 +483,24 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
     // VkDeviceQueueCreateInfo queue_infos[] = {queue_graphics_info,
     //                                          queue_transfer_info};
 
+    VkPhysicalDeviceFeatures vulkan = {
+        .samplerAnisotropy = VK_TRUE,
+    };
+
+    VkPhysicalDeviceVulkan11Features vulkan_11 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+    };
+
     VkPhysicalDeviceVulkan12Features vulkan_12 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
         .descriptorBindingPartiallyBound = VK_TRUE,
         .descriptorBindingSampledImageUpdateAfterBind = VK_TRUE,
         .descriptorBindingVariableDescriptorCount = VK_TRUE,
+        .shaderSampledImageArrayNonUniformIndexing = VK_TRUE,
         .runtimeDescriptorArray = VK_TRUE,
         .descriptorIndexing = VK_TRUE,
         .bufferDeviceAddress = VK_TRUE,
+        .pNext = &vulkan_11,
     };
 
     VkPhysicalDeviceVulkan13Features vulkan_13 = {
@@ -506,6 +516,7 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
         .pNext = &vulkan_13,
         .enabledExtensionCount = vk_device_extension_count,
         .ppEnabledExtensionNames = vk_device_extensions,
+        .pEnabledFeatures = &vulkan,
     };
 
     for (unsigned j = 0; j < vk_device_extension_count; j++) {
@@ -677,6 +688,14 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
 
     vkCreateSampler(rend->device, &nearest_sampler_info, NULL,
                     &rend->linear_sampler);
+
+    nearest_sampler_info.anisotropyEnable = VK_TRUE,
+    nearest_sampler_info.magFilter = VK_FILTER_LINEAR;
+    nearest_sampler_info.minFilter = VK_FILTER_LINEAR;
+    nearest_sampler_info.maxAnisotropy = 16;
+
+    vkCreateSampler(rend->device, &nearest_sampler_info, NULL,
+                    &rend->anisotropy_sampler);
   }
 
   // Create semaphores
@@ -736,8 +755,8 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
 
   vmaCreateAllocator(&allocator_info, &rend->allocator);
 
-  // Create global descriptor set layout and descriptor set
-  // Create global ubo too
+  // Create global descriptor set layout and descriptor set (that contains map
+  // and general infos). Create global ubo and map buffer too.
   {
     VkDescriptorSetLayoutBinding global_ubo_binding = {
         .binding = 0,
@@ -746,10 +765,12 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
         .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_COMPUTE_BIT,
     };
 
+    VkDescriptorSetLayoutBinding bindings[] = {global_ubo_binding};
+
     VkDescriptorSetLayoutCreateInfo desc_info = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
         .bindingCount = 1,
-        .pBindings = &global_ubo_binding,
+        .pBindings = &bindings[0],
     };
 
     vkCreateDescriptorSetLayout(rend->device, &desc_info, NULL,
@@ -957,6 +978,8 @@ void VK_Draw(vk_rend_t *rend, game_state_t *game) {
 
   rend->global_ubo.view_dim[0] = rend->width;
   rend->global_ubo.view_dim[1] = rend->height;
+  rend->global_ubo.map_width = 256;
+  rend->global_ubo.map_height = 256;
   rend->global_ubo.entity_count = rend->ecs->entity_count;
 
   void *data;
@@ -1133,6 +1156,18 @@ void VK_DestroyRend(vk_rend_t *rend) {
   VK_DestroyGBuffer(rend);
   VK_DestroyECS(rend);
 
+  printf("rend->assets.texture_count = %d\n", rend->assets.texture_count);
+
+  for (unsigned i = 0; i < rend->assets.texture_count; i++) {
+    vmaDestroyBuffer(rend->allocator, rend->assets.textures_staging[i],
+                     rend->assets.textures_staging_allocs[i]);
+
+    vkDestroyImageView(rend->device, rend->assets.texture_views[i], NULL);
+
+    vmaDestroyImage(rend->allocator, rend->assets.textures[i],
+                    rend->assets.textures_allocs[i]);
+  }
+
   for (int i = 0; i < 3; i++) {
     vmaDestroyBuffer(rend->allocator, rend->global_buffers[i],
                      rend->global_allocs[i]);
@@ -1140,6 +1175,7 @@ void VK_DestroyRend(vk_rend_t *rend) {
 
   vkDestroySampler(rend->device, rend->nearest_sampler, NULL);
   vkDestroySampler(rend->device, rend->linear_sampler, NULL);
+  vkDestroySampler(rend->device, rend->anisotropy_sampler, NULL);
 
   vkDestroyDescriptorSetLayout(rend->device, rend->global_ubo_desc_set_layout,
                                NULL);

@@ -300,7 +300,7 @@ bool VK_InitGBuffer(vk_rend_t *rend) {
     VkDescriptorSetLayout layouts[] = {
         rend->global_ubo_desc_set_layout,
         rend->global_textures_desc_set_layout,
-        rend->ecs->ts_layout,
+        rend->ecs->ecs_layout,
         rend->ecs->instance_layout,
     };
 
@@ -393,12 +393,22 @@ void VK_DrawGBuffer(vk_rend_t *rend) {
 
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                           rend->gbuffer->pipeline_layout, 2, 1,
-                          &rend->ecs->ts_set, 0, NULL);
+                          &rend->ecs->ecs_set, 0, NULL);
 
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                           rend->gbuffer->pipeline_layout, 3, 1,
                           &rend->ecs->instance_set, 0, NULL);
 
+  unsigned draw_state = 0; // Map
+  // vkCmdPushConstants(cmd, rend->gbuffer->pipeline_layout,
+                    //  VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(unsigned),
+                    //  &draw_state);
+  // vkCmdDraw(cmd, 6, 256 * 256, 0, 0);
+
+  draw_state = 1; // Pawn
+  vkCmdPushConstants(cmd, rend->gbuffer->pipeline_layout,
+                     VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(unsigned),
+                     &draw_state);
   vkCmdDraw(cmd, 6, rend->ecs->entity_count, 0, 0);
 
   vkCmdEndRendering(cmd);

@@ -9,6 +9,7 @@ typedef struct vk_system_t vk_system_t;
 
 #define uint unsigned
 
+#define is_C
 #include "shaders/systems/components.glsl"
 
 bool VK_InitECS(vk_rend_t *rend, unsigned count);

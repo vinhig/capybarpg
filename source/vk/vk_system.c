@@ -16,7 +16,6 @@ void VK_AddWriteECS(vk_rend_t *rend, VkBuffer src, VkBuffer dst, size_t offset,
   }
 
   if (rend->ecs->write_count >= rend->ecs->write_size) {
-    printf("realloc...\n");
     rend->ecs->write_size *= 2;
     rend->ecs->writes =
         realloc(rend->ecs->writes, rend->ecs->write_size * sizeof(vk_write_t));
@@ -29,9 +28,62 @@ void VK_AddWriteECS(vk_rend_t *rend, VkBuffer src, VkBuffer dst, size_t offset,
   rend->ecs->write_count += 1;
 }
 
+void Vk_System_MemoryBarrier(VkCommandBuffer cmd, VkBuffer buffer) {
+  VkBufferMemoryBarrier2 barrier = {
+      .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+      .buffer = buffer,
+      .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT |
+                       VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+      .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT |
+                       VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+      .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+      .dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+      .offset = 0,
+      .size = VK_WHOLE_SIZE,
+  };
+
+  VkDependencyInfo dependency = {
+      .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+      .bufferMemoryBarrierCount = 1,
+      .pBufferMemoryBarriers = &barrier,
+  };
+
+  vkCmdPipelineBarrier2(cmd, &dependency);
+}
+
 bool VK_InitECS(vk_rend_t *rend, unsigned count) {
   rend->ecs = calloc(1, sizeof(vk_ecs_t));
   rend->ecs->max_entities = count;
+
+  // Create an empty map
+  {
+    VkBufferCreateInfo entity_buffer = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = sizeof(struct Tile) * 256 / 256,
+        .pQueueFamilyIndices = &rend->queue_family_graphics_index,
+        .queueFamilyIndexCount = 1,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                 VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                 VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    };
+
+    VmaAllocationCreateInfo entity_allocation = {
+        .usage = VMA_MEMORY_USAGE_AUTO,
+        .requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+    };
+
+    vmaCreateBuffer(rend->allocator, &entity_buffer, &entity_allocation,
+                    &rend->ecs->map_buffer, &rend->ecs->map_alloc, NULL);
+
+    VkDebugUtilsObjectNameInfoEXT map_buffer_name = {
+        .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+        .objectType = VK_OBJECT_TYPE_BUFFER,
+        .objectHandle = (uint64_t)rend->ecs->map_buffer,
+        .pObjectName = "Map Buffer",
+    };
+    rend->vkSetDebugUtilsObjectName(rend->device, &map_buffer_name);
+  }
 
   // Create relevant components buffer, with an arbitrary huge size
   // ENTITIES & TRANSFORMS & MODEL_TRANSFORMS & SPRITES
@@ -144,6 +196,33 @@ bool VK_InitECS(vk_rend_t *rend, unsigned count) {
         .pObjectName = "Sprites Buffer",
     };
     rend->vkSetDebugUtilsObjectName(rend->device, &s_buffer_name);
+
+    VkBufferCreateInfo agent_buffer = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = sizeof(struct Agent) * count,
+        .pQueueFamilyIndices = &rend->queue_family_graphics_index,
+        .queueFamilyIndexCount = 1,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                 VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                 VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    };
+
+    VmaAllocationCreateInfo agent_allocation = {
+        .usage = VMA_MEMORY_USAGE_AUTO,
+        .requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+    };
+
+    vmaCreateBuffer(rend->allocator, &agent_buffer, &agent_allocation,
+                    &rend->ecs->a_buffer, &rend->ecs->a_alloc, NULL);
+
+    VkDebugUtilsObjectNameInfoEXT a_buffer_name = {
+        .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+        .objectType = VK_OBJECT_TYPE_BUFFER,
+        .objectHandle = (uint64_t)rend->ecs->a_buffer,
+        .pObjectName = "Agents Buffer",
+    };
+    rend->vkSetDebugUtilsObjectName(rend->device, &a_buffer_name);
   }
 
   // Create the "instance" buffer, contains depth-ordered entity that should be
@@ -171,6 +250,14 @@ bool VK_InitECS(vk_rend_t *rend, unsigned count) {
                     &rend->ecs->instance_buffer, &rend->ecs->instance_alloc,
                     &instance_alloc_info);
     rend->ecs->instances = instance_alloc_info.pMappedData;
+
+    VkDebugUtilsObjectNameInfoEXT instance_buffer_name = {
+        .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+        .objectType = VK_OBJECT_TYPE_BUFFER,
+        .objectHandle = (uint64_t)rend->ecs->instance_buffer,
+        .pObjectName = "Instances Buffer",
+    };
+    rend->vkSetDebugUtilsObjectName(rend->device, &instance_buffer_name);
   }
 
   // Create the mapped buffer to write/copy to
@@ -298,261 +385,223 @@ bool VK_InitECS(vk_rend_t *rend, unsigned count) {
         .pObjectName = "Sprites Tmp Buffer",
     };
     rend->vkSetDebugUtilsObjectName(rend->device, &s_tmp_buffer_name);
+
+    VkBufferCreateInfo agent_tmp_buffer = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = sizeof(struct Agent) * count,
+        .pQueueFamilyIndices = &rend->queue_family_graphics_index,
+        .queueFamilyIndexCount = 1,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    };
+
+    VmaAllocationCreateInfo agent_tmp_allocation = {
+        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                 VMA_ALLOCATION_CREATE_MAPPED_BIT,
+        .usage = VMA_MEMORY_USAGE_AUTO,
+        .requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+    };
+
+    VmaAllocationInfo agent_transform_alloc_info;
+
+    vmaCreateBuffer(rend->allocator, &agent_tmp_buffer, &agent_tmp_allocation,
+                    &rend->ecs->a_tmp_buffer, &rend->ecs->a_tmp_alloc,
+                    &agent_transform_alloc_info);
+    rend->ecs->agents = agent_transform_alloc_info.pMappedData;
+
+    VkDebugUtilsObjectNameInfoEXT a_tmp_buffer_name = {
+        .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+        .objectType = VK_OBJECT_TYPE_BUFFER,
+        .objectHandle = (uint64_t)rend->ecs->a_tmp_buffer,
+        .pObjectName = "Agents Tmp Buffer",
+    };
+    rend->vkSetDebugUtilsObjectName(rend->device, &a_tmp_buffer_name);
   }
 
-  // BE AWARE, all descriptor also points to the entity buffer!!!!
-
-  // Create descriptor set layout and the related descriptor set for systems
-  // that work with transforms/model_transforms
+  // Create the ECS pipeline layout with the related descriptor set/layout
   {
-    VkDescriptorSetLayoutBinding entities = {
+    VkDescriptorSetLayoutBinding map = {
         .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT,
         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
         .binding = 0,
         .descriptorCount = 1,
     };
 
-    VkDescriptorSetLayoutBinding transforms = {
-        .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT,
-        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-        .binding = 1,
-        .descriptorCount = 1,
-    };
-
-    VkDescriptorSetLayoutBinding model_transforms = {
-        .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT,
-        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-        .binding = 2,
-        .descriptorCount = 1,
-    };
-
-    VkDescriptorSetLayoutBinding bindings[] = {entities, transforms,
-                                               model_transforms};
-
-    VkDescriptorSetLayoutCreateInfo t_layout_info = {
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = 3,
-        .pBindings = &bindings[0],
-    };
-
-    if (vkCreateDescriptorSetLayout(rend->device, &t_layout_info, NULL,
-                                    &rend->ecs->t_layout) != VK_SUCCESS) {
-      printf("Couldn't create descriptor layout for `t_layout`.\n");
-    }
-
-    // Allocate a single descriptor
-    VkDescriptorSetAllocateInfo t_set_info = {
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-        .descriptorPool = rend->descriptor_pool,
-        .descriptorSetCount = 1,
-        .pSetLayouts = &rend->ecs->t_layout,
-    };
-
-    if (vkAllocateDescriptorSets(rend->device, &t_set_info,
-                                 &rend->ecs->t_set)) {
-      printf("Couldn't create descriptor set for `t_set`.\n");
-    }
-
-    VkDescriptorBufferInfo comp_entity_buffer = {
-        .buffer = rend->ecs->e_buffer,
-        .offset = 0,
-        .range = sizeof(unsigned) * count,
-    };
-
-    VkDescriptorBufferInfo comp_transform_buffer = {
-        .buffer = rend->ecs->t_buffer,
-        .offset = 0,
-        .range = sizeof(struct Transform) * count,
-    };
-
-    VkDescriptorBufferInfo comp_model_transform_buffer = {
-        .buffer = rend->ecs->mt_buffer,
-        .offset = 0,
-        .range = sizeof(struct ModelTransform) * count,
-    };
-
-    VkWriteDescriptorSet writes[3] = {
-        [0] =
-            {
-                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = rend->ecs->t_set,
-                .dstBinding = 0,
-                .dstArrayElement = 0,
-                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                .descriptorCount = 1,
-                .pBufferInfo = &comp_entity_buffer,
-            },
-        [1] =
-            {
-                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = rend->ecs->t_set,
-                .dstBinding = 1,
-                .dstArrayElement = 0,
-                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                .descriptorCount = 1,
-                .pBufferInfo = &comp_transform_buffer,
-            },
-        [2] =
-            {
-                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = rend->ecs->t_set,
-                .dstBinding = 2,
-                .dstArrayElement = 0,
-                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                .descriptorCount = 1,
-                .pBufferInfo = &comp_model_transform_buffer,
-            },
-    };
-
-    vkUpdateDescriptorSets(rend->device, 3, &writes[0], 0, NULL);
-
-    VkPipelineLayoutCreateInfo t_pipeline_layout = {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = 1,
-        .pSetLayouts = &rend->ecs->t_layout,
-    };
-
-    if (vkCreatePipelineLayout(rend->device, &t_pipeline_layout, NULL,
-                               &rend->ecs->t_pipeline_layout) != VK_SUCCESS) {
-      printf("Couldn't create pipeline layout for `t_pipeline_layout`.\n");
-    }
-  }
-
-  // Create descriptor set layout and the related descriptor set for systems
-  // that work with transforms/model_transforms/sprites
-  {
     VkDescriptorSetLayoutBinding entities = {
         .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT,
         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-        .binding = 0,
+        .binding = 1,
         .descriptorCount = 1,
     };
 
     VkDescriptorSetLayoutBinding transforms = {
         .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT,
         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-        .binding = 1,
-        .descriptorCount = 1,
-    };
-
-    VkDescriptorSetLayoutBinding model_transforms = {
-        .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT,
-        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
         .binding = 2,
         .descriptorCount = 1,
     };
 
-    VkDescriptorSetLayoutBinding sprites = {
+    VkDescriptorSetLayoutBinding model_transforms = {
         .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT,
         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
         .binding = 3,
         .descriptorCount = 1,
     };
 
-    VkDescriptorSetLayoutBinding bindings[] = {entities, transforms,
-                                               model_transforms, sprites};
+    VkDescriptorSetLayoutBinding sprites = {
+        .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT,
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .binding = 4,
+        .descriptorCount = 1,
+    };
 
-    VkDescriptorSetLayoutCreateInfo ts_layout_info = {
+    VkDescriptorSetLayoutBinding agents = {
+        .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT,
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .binding = 5,
+        .descriptorCount = 1,
+    };
+
+    VkDescriptorSetLayoutBinding bindings[] = {
+        map, entities, transforms, model_transforms, sprites, agents,
+    };
+
+    VkDescriptorSetLayoutCreateInfo layout_info = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = 4,
+        .bindingCount = 6,
         .pBindings = &bindings[0],
     };
 
-    if (vkCreateDescriptorSetLayout(rend->device, &ts_layout_info, NULL,
-                                    &rend->ecs->ts_layout) != VK_SUCCESS) {
+    if (vkCreateDescriptorSetLayout(rend->device, &layout_info, NULL,
+                                    &rend->ecs->ecs_layout) != VK_SUCCESS) {
       printf("Couldn't create descriptor layout for `t_layout`.\n");
     }
 
     // Allocate a single descriptor
-    VkDescriptorSetAllocateInfo t_set_info = {
+    VkDescriptorSetAllocateInfo set_info = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
         .descriptorPool = rend->descriptor_pool,
         .descriptorSetCount = 1,
-        .pSetLayouts = &rend->ecs->ts_layout,
+        .pSetLayouts = &rend->ecs->ecs_layout,
     };
 
-    if (vkAllocateDescriptorSets(rend->device, &t_set_info,
-                                 &rend->ecs->ts_set)) {
+    if (vkAllocateDescriptorSets(rend->device, &set_info,
+                                 &rend->ecs->ecs_set)) {
       printf("Couldn't create descriptor set for `t_set`.\n");
     }
+
+    VkDescriptorBufferInfo comp_map_buffer = {
+        .buffer = rend->ecs->map_buffer,
+        .offset = 0,
+        .range = VK_WHOLE_SIZE,
+    };
 
     VkDescriptorBufferInfo comp_entity_buffer = {
         .buffer = rend->ecs->e_buffer,
         .offset = 0,
-        .range = sizeof(unsigned) * count,
+        .range = VK_WHOLE_SIZE,
     };
 
     VkDescriptorBufferInfo comp_transform_buffer = {
         .buffer = rend->ecs->t_buffer,
         .offset = 0,
-        .range = sizeof(struct Transform) * count,
+        .range = VK_WHOLE_SIZE,
     };
 
     VkDescriptorBufferInfo comp_model_transform_buffer = {
         .buffer = rend->ecs->mt_buffer,
         .offset = 0,
-        .range = sizeof(struct ModelTransform) * count,
+        .range = VK_WHOLE_SIZE,
     };
 
     VkDescriptorBufferInfo comp_sprite_buffer = {
         .buffer = rend->ecs->s_buffer,
         .offset = 0,
-        .range = sizeof(struct Sprite) * count,
+        .range = VK_WHOLE_SIZE,
     };
 
-    VkWriteDescriptorSet writes[4] = {
+    VkDescriptorBufferInfo comp_agent_buffer = {
+        .buffer = rend->ecs->a_buffer,
+        .offset = 0,
+        .range = VK_WHOLE_SIZE,
+    };
+
+    VkWriteDescriptorSet writes[6] = {
         [0] =
             {
                 .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = rend->ecs->ts_set,
+                .dstSet = rend->ecs->ecs_set,
                 .dstBinding = 0,
+                .dstArrayElement = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .pBufferInfo = &comp_map_buffer,
+            },
+        [1] =
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = rend->ecs->ecs_set,
+                .dstBinding = 1,
                 .dstArrayElement = 0,
                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                 .descriptorCount = 1,
                 .pBufferInfo = &comp_entity_buffer,
             },
-        [1] =
+        [2] =
             {
                 .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = rend->ecs->ts_set,
-                .dstBinding = 1,
+                .dstSet = rend->ecs->ecs_set,
+                .dstBinding = 2,
                 .dstArrayElement = 0,
                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                 .descriptorCount = 1,
                 .pBufferInfo = &comp_transform_buffer,
             },
-        [2] =
+        [3] =
             {
                 .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = rend->ecs->ts_set,
-                .dstBinding = 2,
+                .dstSet = rend->ecs->ecs_set,
+                .dstBinding = 3,
                 .dstArrayElement = 0,
                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                 .descriptorCount = 1,
                 .pBufferInfo = &comp_model_transform_buffer,
             },
-        [3] =
+        [4] =
             {
                 .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = rend->ecs->ts_set,
-                .dstBinding = 3,
+                .dstSet = rend->ecs->ecs_set,
+                .dstBinding = 4,
                 .dstArrayElement = 0,
                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                 .descriptorCount = 1,
                 .pBufferInfo = &comp_sprite_buffer,
             },
+        [5] =
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = rend->ecs->ecs_set,
+                .dstBinding = 5,
+                .dstArrayElement = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .pBufferInfo = &comp_agent_buffer,
+            },
     };
 
-    vkUpdateDescriptorSets(rend->device, 4, &writes[0], 0, NULL);
+    vkUpdateDescriptorSets(rend->device, 6, &writes[0], 0, NULL);
+
+    VkDescriptorSetLayout layouts[] = {rend->global_ubo_desc_set_layout,
+                                       rend->ecs->ecs_layout};
 
     VkPipelineLayoutCreateInfo t_pipeline_layout = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = 1,
-        .pSetLayouts = &rend->ecs->ts_layout,
+        .setLayoutCount = 2,
+        .pSetLayouts = &layouts[0],
     };
 
     if (vkCreatePipelineLayout(rend->device, &t_pipeline_layout, NULL,
-                               &rend->ecs->ts_pipeline_layout) != VK_SUCCESS) {
+                               &rend->ecs->ecs_pipeline_layout) != VK_SUCCESS) {
       printf("Couldn't create pipeline layout for `t_pipeline_layout`.\n");
     }
   }
@@ -641,39 +690,104 @@ vk_system_t *VK_AddSystem_Transform(vk_rend_t *rend, const char *name,
 
   VkComputePipelineCreateInfo t_pipeline = {
       .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-      .layout = rend->ecs->t_pipeline_layout,
+      .layout = rend->ecs->ecs_pipeline_layout,
       .stage = shader_stage,
   };
 
   vkCreateComputePipelines(rend->device, VK_NULL_HANDLE, 1, &t_pipeline, NULL,
                            &new_system->pipeline);
 
-  new_system->related_set = rend->ecs->t_set;
-  new_system->related_layout = rend->ecs->t_pipeline_layout;
+  VkDebugUtilsObjectNameInfoEXT name_info = {
+      .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+      .objectType = VK_OBJECT_TYPE_PIPELINE,
+      .objectHandle = (uint64_t)new_system->pipeline,
+      .pObjectName = name,
+  };
+  rend->vkSetDebugUtilsObjectName(rend->device, &name_info);
 
   vkDestroyShaderModule(rend->device, module, NULL);
 
-  return NULL;
+  return new_system;
 }
 
 vk_system_t *VK_AddSystem_Agent_Transform(vk_rend_t *rend, const char *name,
                                           const char *src) {
-  // VkShaderModule module = VK_LoadShaderModule(rend, src);
+  VkShaderModule module = VK_LoadShaderModule(rend, src);
 
-  return NULL;
+  if (rend->ecs->system_count == 15) {
+    printf("Couldn't create a new system! Max number of systems reached.\n");
+    return NULL;
+  }
+
+  vk_system_t *new_system = &rend->ecs->systems[rend->ecs->system_count];
+  rend->ecs->system_count++;
+
+  // Create a compute pipeline for this system
+  VkPipelineShaderStageCreateInfo shader_stage = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+      .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+      .module = module,
+      .pName = "main",
+  };
+
+  VkComputePipelineCreateInfo at_pipeline = {
+      .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+      .layout = rend->ecs->ecs_pipeline_layout,
+      .stage = shader_stage,
+  };
+
+  vkCreateComputePipelines(rend->device, VK_NULL_HANDLE, 1, &at_pipeline, NULL,
+                           &new_system->pipeline);
+
+  VkDebugUtilsObjectNameInfoEXT name_info = {
+      .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+      .objectType = VK_OBJECT_TYPE_PIPELINE,
+      .objectHandle = (uint64_t)new_system->pipeline,
+      .pObjectName = name,
+  };
+  rend->vkSetDebugUtilsObjectName(rend->device, &name_info);
+
+  vkDestroyShaderModule(rend->device, module, NULL);
+
+  return new_system;
 }
 
 void VK_DestroyECS(vk_rend_t *rend) {
+  vmaDestroyBuffer(rend->allocator, rend->ecs->e_buffer, rend->ecs->e_alloc);
+  vmaDestroyBuffer(rend->allocator, rend->ecs->e_tmp_buffer,
+                   rend->ecs->e_tmp_alloc);
+
+  vmaDestroyBuffer(rend->allocator, rend->ecs->map_buffer,
+                   rend->ecs->map_alloc);
+
   vmaDestroyBuffer(rend->allocator, rend->ecs->t_buffer, rend->ecs->t_alloc);
   vmaDestroyBuffer(rend->allocator, rend->ecs->mt_buffer, rend->ecs->mt_alloc);
+
+  vmaDestroyBuffer(rend->allocator, rend->ecs->t_tmp_buffer,
+                   rend->ecs->t_tmp_alloc);
+  vmaDestroyBuffer(rend->allocator, rend->ecs->mt_tmp_buffer,
+                   rend->ecs->mt_tmp_alloc);
+
+  vmaDestroyBuffer(rend->allocator, rend->ecs->a_buffer, rend->ecs->a_alloc);
+  vmaDestroyBuffer(rend->allocator, rend->ecs->a_tmp_buffer,
+                   rend->ecs->a_tmp_alloc);
+
+  vmaDestroyBuffer(rend->allocator, rend->ecs->s_tmp_buffer,
+                   rend->ecs->s_tmp_alloc);
+  vmaDestroyBuffer(rend->allocator, rend->ecs->s_buffer, rend->ecs->s_alloc);
+
+  vmaDestroyBuffer(rend->allocator, rend->ecs->instance_buffer,
+                   rend->ecs->instance_alloc);
 
   for (unsigned i = 0; i < rend->ecs->system_count; i++) {
     vkDestroyPipeline(rend->device, rend->ecs->systems[i].pipeline, NULL);
   }
 
-  vkDestroyPipelineLayout(rend->device, rend->ecs->t_pipeline_layout, NULL);
+  vkDestroyPipelineLayout(rend->device, rend->ecs->ecs_pipeline_layout, NULL);
 
-  vkDestroyDescriptorSetLayout(rend->device, rend->ecs->t_layout, NULL);
+  vkDestroyDescriptorSetLayout(rend->device, rend->ecs->instance_layout, NULL);
+
+  vkDestroyDescriptorSetLayout(rend->device, rend->ecs->ecs_layout, NULL);
 }
 
 void VK_TickSystems(vk_rend_t *rend) {
@@ -762,11 +876,22 @@ void VK_TickSystems(vk_rend_t *rend) {
       .dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
   };
 
-  VkBufferMemoryBarrier2 barriers[] = {t_barrier, s_barrier};
+  VkBufferMemoryBarrier2 a_barrier = {
+      .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+      .buffer = rend->ecs->a_buffer,
+      .size = VK_WHOLE_SIZE,
+      .offset = 0,
+      .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+      .dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT,
+      .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+      .dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+  };
+
+  VkBufferMemoryBarrier2 barriers[] = {t_barrier, s_barrier, a_barrier};
 
   VkDependencyInfo dependency = {
       .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-      .bufferMemoryBarrierCount = 2,
+      .bufferMemoryBarrierCount = 3,
       .pBufferMemoryBarriers = &barriers[0],
   };
 
@@ -775,11 +900,19 @@ void VK_TickSystems(vk_rend_t *rend) {
   for (unsigned i = 0; i < rend->ecs->system_count; i++) {
     vk_system_t *system = &rend->ecs->systems[i];
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, system->pipeline);
+    vkCmdBindDescriptorSets(
+        cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rend->ecs->ecs_pipeline_layout, 0,
+        1, &rend->global_ubo_desc_set[rend->current_frame % 3], 0, 0);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                            system->related_layout, 0, 1, &system->related_set,
-                            0, 0);
+                            rend->ecs->ecs_pipeline_layout, 1, 1,
+                            &rend->ecs->ecs_set, 0, 0);
     //
     vkCmdDispatch(cmd, (rend->ecs->entity_count + 16) / 16, 1, 1);
+
+    Vk_System_MemoryBarrier(cmd, rend->ecs->a_buffer);
+    Vk_System_MemoryBarrier(cmd, rend->ecs->s_buffer);
+    Vk_System_MemoryBarrier(cmd, rend->ecs->t_buffer);
+    Vk_System_MemoryBarrier(cmd, rend->ecs->mt_buffer);
   }
 
   vkEndCommandBuffer(cmd);
@@ -813,8 +946,6 @@ void VK_Add_Transform(vk_rend_t *rend, unsigned entity,
   size_t size = sizeof(struct Transform);
   size_t offset = entity * sizeof(struct Transform);
 
-  printf("writing transform with offset, %lu\n", offset);
-
   ((struct Transform *)rend->ecs->transforms)[entity] = *transform;
 
   // memcpy( + entity, transform, size);
@@ -830,21 +961,18 @@ void VK_Add_Model_Transform(vk_rend_t *rend, unsigned entity,
 }
 
 void VK_Add_Agent(vk_rend_t *rend, unsigned entity, struct Agent *agent) {
-  // size_t size = sizeof(struct Agent);
-  // size_t offset = entity * sizeof(struct Agent);
+  size_t size = sizeof(struct Agent);
+  size_t offset = entity * sizeof(struct Agent);
 
-  // memcpy((struct Agent *)rend->ecs->transforms + entity, agent, size);
+  ((struct Agent *)rend->ecs->agents)[entity] = *agent;
 
-  // VK_AddWriteECS(rend, rend->ecs->a_tmp_buffer, rend->ecs->a_buffer, offset,
-  //                size);
-
-  // !TODO
+  VK_AddWriteECS(rend, rend->ecs->a_tmp_buffer, rend->ecs->a_buffer, offset,
+                 size);
 }
 
 void VK_Add_Sprite(vk_rend_t *rend, unsigned entity, struct Sprite *sprite) {
   size_t size = sizeof(struct Sprite);
   size_t offset = entity * sizeof(struct Sprite);
-  printf("writing sprite with offset, %lu\n", offset);
 
   ((struct Sprite *)rend->ecs->sprites)[entity] = *sprite;
 
