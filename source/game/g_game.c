@@ -42,9 +42,12 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
   glm_mat4_identity(state.fps.view);
   // glm_ortho(-1.0 * ratio, 1.0* ratio, -1.0f, 1.0f , 0.01, 50.0,
   //           &state.fps.proj);
-  float zoom = 0.2;
-  glm_ortho(-1.0 * ratio / zoom, 1.0 * ratio / zoom, -1.0f / zoom, 1.0f / zoom,
-            0.01, 50.0, (vec4 *)&state.fps.view_proj);
+  float zoom = 0.1f;
+  float offset_x = 7.0f;
+  float offset_y = 7.0f;
+  glm_ortho(-1.0 * ratio / zoom + offset_x, 1.0 * ratio / zoom + offset_x,
+            -1.0f / zoom + offset_y, 1.0f / zoom + offset_y, 0.01, 50.0,
+            (vec4 *)&state.fps.view_proj);
   // glm_ortho_default(ratio, &state.fps.view_proj);
 
   VK_TickSystems(CL_GetRend(client));
@@ -67,8 +70,10 @@ texture_t G_LoadSingleTexture(const char *path) {
 }
 
 bool G_Load(client_t *client, game_t *game) {
-  srand(time(NULL));
-  texture_t *textures = malloc(sizeof(texture_t) * 12);
+  time_t seed = time(NULL);
+  printf("seed: %ld\n", seed);
+  srand(seed);
+  texture_t *textures = malloc(sizeof(texture_t) * 14);
   // Just load the hardcoded animals atm
   textures[0] = G_LoadSingleTexture("../base/Bison_east.png");
   textures[1] = G_LoadSingleTexture("../base/Bison_north.png");
@@ -86,9 +91,12 @@ bool G_Load(client_t *client, game_t *game) {
   textures[10] = G_LoadSingleTexture("../base/DuckMale_north.png");
   textures[11] = G_LoadSingleTexture("../base/DuckMale_south.png");
 
+  textures[12] = G_LoadSingleTexture("../base/dirt.png");
+  textures[13] = G_LoadSingleTexture("../base/Wall_single.png");
+
   for (unsigned i = 0; i < 18; i++) {
     unsigned texture = rand() % 4 * 3;
-    
+
     struct Sprite sprite = {
         .current = texture,
         .texture_east = texture,
@@ -120,8 +128,8 @@ bool G_Load(client_t *client, game_t *game) {
     struct Transform transform = {
         .position =
             {
-                [0] = ((float)(rand() % 20) - 10.0f) / 5.0f,
-                [1] = ((float)(rand() % 20) - 10.0f) / 5.0f,
+                [0] = ((float)(rand() % 8)) + 0.0f,
+                [1] = ((float)(rand() % 8)) + 2.0f,
                 [2] = 0.0f,
                 [3] = 1.0f,
             },
@@ -136,7 +144,29 @@ bool G_Load(client_t *client, game_t *game) {
     G_AddPawn(client, game, &transform, &sprite);
   }
 
-  VK_UploadTextures(CL_GetRend(client), textures, 12);
+  VK_UploadTextures(CL_GetRend(client), textures, 14);
+
+  struct Tile tiles[256][256];
+
+  for (unsigned x = 0; x < 256; x++) {
+    for (unsigned y = 0; y < 256; y++) {
+      tiles[x][y].texture = 12;
+      tiles[x][y].cost = 1.2;
+    }
+  }
+
+  for (unsigned i = 0; i < 1000; i++) {
+
+    int x = rand() % 64 + 4;
+    int y = rand() % 64 + 4;
+
+    if (x != 25 && y != 25) {
+      tiles[x][y].texture = 13;
+      tiles[x][y].cost = 999;
+    }
+  }
+
+  VK_SetMap(CL_GetRend(client), &tiles[0][0], 256, 256);
 
   return true;
 }
@@ -151,11 +181,11 @@ void G_AddPawn(client_t *client, game_t *game, struct Transform *transform,
   struct Agent agent = {
       .target =
           {
-              [0] = 0.0f,
-              [1] = 0.0f,
+              [0] = 10.0f,
+              [1] = 10.0f,
               [3] = 1.0f,
           },
-      .speed = 1.0f,
+      .speed = 1.0,
   };
 
   VK_Add_Transform(rend, entity, transform);

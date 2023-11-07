@@ -400,10 +400,10 @@ void VK_DrawGBuffer(vk_rend_t *rend) {
                           &rend->ecs->instance_set, 0, NULL);
 
   unsigned draw_state = 0; // Map
-  // vkCmdPushConstants(cmd, rend->gbuffer->pipeline_layout,
-                    //  VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(unsigned),
-                    //  &draw_state);
-  // vkCmdDraw(cmd, 6, 256 * 256, 0, 0);
+  vkCmdPushConstants(cmd, rend->gbuffer->pipeline_layout,
+                     VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(unsigned),
+                     &draw_state);
+  vkCmdDraw(cmd, 6, 256 * 256, 0, 0);
 
   draw_state = 1; // Pawn
   vkCmdPushConstants(cmd, rend->gbuffer->pipeline_layout,

@@ -57,9 +57,9 @@ bool VK_InitECS(vk_rend_t *rend, unsigned count) {
 
   // Create an empty map
   {
-    VkBufferCreateInfo entity_buffer = {
+    VkBufferCreateInfo map_buffer = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size = sizeof(struct Tile) * 256 / 256,
+        .size = sizeof(struct Tile) * 256 * 256,
         .pQueueFamilyIndices = &rend->queue_family_graphics_index,
         .queueFamilyIndexCount = 1,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
@@ -68,12 +68,12 @@ bool VK_InitECS(vk_rend_t *rend, unsigned count) {
                  VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
     };
 
-    VmaAllocationCreateInfo entity_allocation = {
+    VmaAllocationCreateInfo map_allocation = {
         .usage = VMA_MEMORY_USAGE_AUTO,
         .requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
     };
 
-    vmaCreateBuffer(rend->allocator, &entity_buffer, &entity_allocation,
+    vmaCreateBuffer(rend->allocator, &map_buffer, &map_allocation,
                     &rend->ecs->map_buffer, &rend->ecs->map_alloc, NULL);
 
     VkDebugUtilsObjectNameInfoEXT map_buffer_name = {
@@ -81,6 +81,39 @@ bool VK_InitECS(vk_rend_t *rend, unsigned count) {
         .objectType = VK_OBJECT_TYPE_BUFFER,
         .objectHandle = (uint64_t)rend->ecs->map_buffer,
         .pObjectName = "Map Buffer",
+    };
+    rend->vkSetDebugUtilsObjectName(rend->device, &map_buffer_name);
+  }
+  {
+    VkBufferCreateInfo map_tmp_buffer = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = sizeof(struct Tile) * 256 * 256,
+        .pQueueFamilyIndices = &rend->queue_family_graphics_index,
+        .queueFamilyIndexCount = 1,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .usage =
+            VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    };
+
+    VmaAllocationCreateInfo map_tmp_allocation = {
+        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                 VMA_ALLOCATION_CREATE_MAPPED_BIT,
+        .usage = VMA_MEMORY_USAGE_AUTO,
+        .requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+    };
+
+    VmaAllocationInfo map_alloc_info;
+
+    vmaCreateBuffer(rend->allocator, &map_tmp_buffer, &map_tmp_allocation,
+                    &rend->ecs->map_tmp_buffer, &rend->ecs->map_tmp_alloc,
+                    &map_alloc_info);
+    rend->ecs->map = map_alloc_info.pMappedData;
+
+    VkDebugUtilsObjectNameInfoEXT map_buffer_name = {
+        .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+        .objectType = VK_OBJECT_TYPE_BUFFER,
+        .objectHandle = (uint64_t)rend->ecs->map_tmp_buffer,
+        .pObjectName = "Map Tmp Buffer",
     };
     rend->vkSetDebugUtilsObjectName(rend->device, &map_buffer_name);
   }
@@ -759,6 +792,8 @@ void VK_DestroyECS(vk_rend_t *rend) {
 
   vmaDestroyBuffer(rend->allocator, rend->ecs->map_buffer,
                    rend->ecs->map_alloc);
+  vmaDestroyBuffer(rend->allocator, rend->ecs->map_tmp_buffer,
+                   rend->ecs->map_tmp_alloc);
 
   vmaDestroyBuffer(rend->allocator, rend->ecs->t_buffer, rend->ecs->t_alloc);
   vmaDestroyBuffer(rend->allocator, rend->ecs->mt_buffer, rend->ecs->mt_alloc);
@@ -977,5 +1012,13 @@ void VK_Add_Sprite(vk_rend_t *rend, unsigned entity, struct Sprite *sprite) {
   ((struct Sprite *)rend->ecs->sprites)[entity] = *sprite;
 
   VK_AddWriteECS(rend, rend->ecs->s_tmp_buffer, rend->ecs->s_buffer, offset,
+                 size);
+}
+
+void VK_SetMap(vk_rend_t *rend, struct Tile *tiles, unsigned map_width,
+               unsigned map_height) {
+  size_t size = sizeof(struct Tile) * map_height * map_width;
+  memcpy(rend->ecs->map, tiles, size);
+  VK_AddWriteECS(rend, rend->ecs->map_tmp_buffer, rend->ecs->map_buffer, 0,
                  size);
 }

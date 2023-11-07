@@ -10,7 +10,7 @@
         "vector": "c",
         "string_view": "c",
         "span": "c",
-        "*.glsl": "c",
+        "*.glsl": "glsl",
         "*.rh": "c",
         "random": "c",
         "chrono": "c",

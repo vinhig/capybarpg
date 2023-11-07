@@ -31,8 +31,6 @@ typedef struct render_target_t {
 
 struct vk_system_t {
   VkPipeline pipeline;
-
-  
 };
 
 typedef struct vk_ecs_t {
@@ -44,6 +42,8 @@ typedef struct vk_ecs_t {
 
   VkBuffer map_buffer;
   VmaAllocation map_alloc;
+  VkBuffer map_tmp_buffer;
+  VmaAllocation map_tmp_alloc;
   void *map;
 
   VkBuffer e_buffer;

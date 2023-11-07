@@ -38,16 +38,15 @@ struct Agent {
 #define agent_signature 1 << 3
 
 struct Tile {
-  float speed;
   float cost;
-  uint terrain;
-  bool fire;
-  bool selected;
+  uint texture;
+
+  uint selected;
+  uint fire;
 };
 
 #ifndef is_C
-layout(std140, set = SET, binding = 0) buffer Map { Tile tiles[]; }
-map;
+layout(std430, set = SET, binding = 0) buffer Map { Tile tiles[256][256]; };
 
 layout(std140, set = SET, binding = 1) buffer Entities { uint entities[]; };
 
@@ -59,13 +58,7 @@ layout(std140, set = SET, binding = 3) buffer ModelTransforms {
   ModelTransform model_transforms[];
 };
 
+layout(std430, set = SET, binding = 4) buffer Sprites { Sprite sprites[]; };
 
-layout(std430, set = SET, binding = 4) buffer Sprites {
-  Sprite sprites[];
-};
-
-
-layout(std140, set = SET, binding = 5) buffer Agents {
-  Agent agents[];
-};
+layout(std140, set = SET, binding = 5) buffer Agents { Agent agents[]; };
 #endif
