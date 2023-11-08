@@ -31,8 +31,8 @@ struct Sprite {
 struct Agent {
   // target.xy => target tile
   // target.w => currently path_finding
-  vec4 target;
-  float speed;
+  vec2 direction;
+  bool moving;
 };
 
 #define agent_signature 1 << 3

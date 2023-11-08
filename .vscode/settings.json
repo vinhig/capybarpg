@@ -19,6 +19,7 @@
         "algorithm": "c",
         "semaphore": "c",
         "map": "c",
-        "format": "c"
+        "format": "c",
+        "functional": "c"
     }
 }

@@ -36,3 +36,7 @@ void VK_Add_Sprite(vk_rend_t *rend, unsigned entity, struct Sprite *sprite);
 
 void VK_SetMap(vk_rend_t *rend, struct Tile *tiles, unsigned map_width,
                unsigned map_height);
+
+void *VK_GetAgents(vk_rend_t *rend);
+void *VK_GetTransforms(vk_rend_t *rend);
+void *VK_GetMap(vk_rend_t *rend);

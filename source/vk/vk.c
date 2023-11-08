@@ -1425,3 +1425,9 @@ void VK_UploadTextures(vk_rend_t *rend, texture_t *textures, unsigned count) {
 
   VK_CreateTexturesDescriptor(rend);
 }
+
+void *VK_GetAgents(vk_rend_t *rend) { return rend->ecs->agents; }
+
+void *VK_GetTransforms(vk_rend_t *rend) { return rend->ecs->transforms; }
+
+void *VK_GetMap(vk_rend_t *rend) { return rend->ecs->map; }

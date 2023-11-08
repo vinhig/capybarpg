@@ -26,7 +26,7 @@ shaders = [
   'source/shaders/gbuffer.frag.glsl',
   # 'source/shaders/shading.comp.glsl',
   'source/shaders/systems/model_matrix_frustum.comp.glsl',
-  'source/shaders/systems/path_finding.comp.glsl',
+  # 'source/shaders/systems/path_finding.comp.glsl',
 ]
 
 add_global_arguments(

@@ -1,3 +1,6 @@
+don't work with that
+it's slow af
+
 #version 450
 
 layout(local_size_x = 16, local_size_y = 1, local_size_z = 1) in;
@@ -29,8 +32,6 @@ bool is_cell_valid(vec2 position) {
 }
 
 vec2 a_star(vec2 pos, vec2 target) {
-  vec2 dist = target - pos;
-
   ivec2 start = ivec2(floor(pos));
   ivec2 end = ivec2(floor(target));
 

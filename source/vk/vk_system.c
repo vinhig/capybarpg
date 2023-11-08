@@ -845,6 +845,12 @@ void VK_TickSystems(vk_rend_t *rend) {
 
   vkBeginCommandBuffer(cmd, &begin_info);
 
+  // Apply ECS writes (but whole buffer one)
+  VK_AddWriteECS(rend, rend->ecs->t_tmp_buffer, rend->ecs->t_buffer, 0,
+                 sizeof(struct Transform) * rend->ecs->max_entities);
+  VK_AddWriteECS(rend, rend->ecs->a_tmp_buffer, rend->ecs->a_buffer, 0,
+                 sizeof(struct Agent) * rend->ecs->max_entities);
+
   if (rend->ecs->write_count) {
     vmaFlushAllocation(rend->allocator, rend->ecs->t_tmp_alloc, 0,
                        VK_WHOLE_SIZE);
