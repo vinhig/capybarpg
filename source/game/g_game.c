@@ -77,7 +77,7 @@ void G_PrintNode(node_t *node) {
 }
 
 // float G_Distance(vec2 a, vec2 b) {
-  // return sqrtf(powf(a[0] - b[0], 2.0) + powf(a[1] - b[1], 2.0));
+// return sqrtf(powf(a[0] - b[0], 2.0) + powf(a[1] - b[1], 2.0));
 // }
 
 float G_Distance(vec2 a, vec2 b) {
@@ -106,8 +106,8 @@ bool G_ValidCell(vec2 position, vec2 d, struct Tile *tiles) {
       through_a = tiles[check_row * 256 + check_col].cost;
     }
     {
-      unsigned check_row = position[0]- d[0];
-      unsigned check_col = position[1]- d[1] + d[1];
+      unsigned check_row = position[0] - d[0];
+      unsigned check_col = position[1] - d[1] + d[1];
 
       through_b = tiles[check_row * 256 + check_col].cost;
     }

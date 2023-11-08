@@ -10,7 +10,6 @@ dl = cc.find_library('dl', required : false)
 sdl2 = dependency('SDL2')
 opengl = dependency('GL')
 
-
 if build_machine.system() == 'darwin'
     molten_dirs = []
     if import('fs').exists('/opt/homebrew/lib/libMoltenVK.dylib')
@@ -60,6 +59,13 @@ endforeach
 
 shaders = declare_dependency(
   sources: shader_targets
+)
+
+a_star = executable('a_star',
+  'benchmark/fast_a_star.c',
+  include_directories: [include_directories('source/'), include_directories('external/')],
+  # link_args: '-pg',
+  # c_args: '-pg'
 )
 
 exe = executable('maidenless',
