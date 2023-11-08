@@ -21,6 +21,9 @@ void main() {
   // uniform
   if (o_albedo_importance == vec4(1.0, 0.0, 0.0, 0.0)) {
     vec4 color = texture(textures[nonuniformEXT(o_albedo_id.x)], vtx_uv);
+    if (color.a <= 0.2) {
+      color.a = 0.0f;
+    }
     o_albedo = color;
   } else {
     vec4 color = texture(textures[nonuniformEXT(o_albedo_id.x)], vtx_uv);

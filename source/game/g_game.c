@@ -77,16 +77,49 @@ void G_PrintNode(node_t *node) {
 }
 
 // float G_Distance(vec2 a, vec2 b) {
-//   return sqrtf(powf(a[0] - b[0], 2.0) + powf(a[1] - b[1], 2.0));
+  // return sqrtf(powf(a[0] - b[0], 2.0) + powf(a[1] - b[1], 2.0));
 // }
 
 float G_Distance(vec2 a, vec2 b) {
   return fabs(a[0] - b[0]) + fabs(a[1] - b[1]);
 }
 
-bool G_ValidCell(vec2 position) {
-  return (position[0] > 0 && position[1] > 0 && position[0] < 256 &&
-          position[1] < 256);
+bool G_ValidCell(vec2 position, vec2 d, struct Tile *tiles) {
+  if (!(position[0] >= 0 && position[1] >= 0 && position[0] < 256 &&
+        position[1] < 256)) {
+    return false;
+  }
+
+  float cost = tiles[(int)(position[1] * 256 + position[0])].cost;
+  if (cost == 999) {
+    return false;
+  }
+
+  // Check for diagonal
+  if (fabs(d[0]) == 1 && fabs(d[1]) == 1) {
+    float through_a;
+    float through_b;
+    {
+      unsigned check_col = position[0] - d[0] + d[0];
+      unsigned check_row = position[1] - d[1];
+
+      through_a = tiles[check_row * 256 + check_col].cost;
+    }
+    {
+      unsigned check_row = position[0]- d[0];
+      unsigned check_col = position[1]- d[1] + d[1];
+
+      through_b = tiles[check_row * 256 + check_col].cost;
+    }
+
+    if (through_a == 999.0f || through_b == 999.0f) {
+      return false;
+    }
+
+    // exit(-1);
+  }
+
+  return true;
 }
 
 void G_PathFinding(worker_t *worker, unsigned entity) {
@@ -163,17 +196,32 @@ void G_PathFinding(worker_t *worker, unsigned entity) {
       return;
     }
 
-    vec2 neighbors[4];
-    glm_vec2_add(current->position, &(vec2){1, 0}[0], neighbors[0]);
-    glm_vec2_add(current->position, &(vec2){0, 1}[0], neighbors[1]);
-    glm_vec2_add(current->position, &(vec2){0, -1}[0], neighbors[2]);
-    glm_vec2_add(current->position, &(vec2){-1, 0}[0], neighbors[3]);
+    vec2 directions[8];
+    glm_vec2(&(vec2){1, 0}[0], directions[0]);
+    glm_vec2(&(vec2){0, 1}[0], directions[1]);
+    glm_vec2(&(vec2){0, -1}[0], directions[2]);
+    glm_vec2(&(vec2){-1, 0}[0], directions[3]);
+    glm_vec2(&(vec2){1, 1}[0], directions[4]);
+    glm_vec2(&(vec2){-1, 1}[0], directions[5]);
+    glm_vec2(&(vec2){-1, -1}[0], directions[6]);
+    glm_vec2(&(vec2){1, -1}[0], directions[7]);
 
-    for (unsigned i = 0; i < 4; i++) {
+    vec2 neighbors[8];
+    glm_vec2_add(current->position, directions[0], neighbors[0]);
+    glm_vec2_add(current->position, directions[1], neighbors[1]);
+    glm_vec2_add(current->position, directions[2], neighbors[2]);
+    glm_vec2_add(current->position, directions[3], neighbors[3]);
+    glm_vec2_add(current->position, directions[4], neighbors[4]);
+    glm_vec2_add(current->position, directions[5], neighbors[5]);
+    glm_vec2_add(current->position, directions[6], neighbors[6]);
+    glm_vec2_add(current->position, directions[7], neighbors[7]);
+
+    for (unsigned i = 0; i < 8; i++) {
       int new_row = (int)neighbors[i][0];
       int new_col = (int)neighbors[i][1];
 
-      if (G_ValidCell(neighbors[i]) && !closed_list_bool[new_row][new_col]) {
+      if (G_ValidCell(neighbors[i], directions[i], worker->game->tiles) &&
+          !closed_list_bool[new_row][new_col]) {
         float tentative_g =
             current->g + worker->game->tiles[new_row * 256 + new_col].cost;
 
@@ -190,6 +238,8 @@ void G_PathFinding(worker_t *worker, unsigned entity) {
       }
     }
   }
+
+  printf("didn't find anything...\n");
 }
 
 game_t *G_CreateGame(client_t *client, char *base) {
@@ -211,7 +261,6 @@ game_t *G_CreateGame(client_t *client, char *base) {
 void G_DestroyGame(game_t *game) { free(game); }
 
 game_state_t G_TickGame(client_t *client, game_t *game) {
-  sleep(1);
   game_state_t state;
   unsigned w, h;
   CL_GetViewDim(client, &w, &h);
@@ -219,9 +268,9 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
   float ratio = (float)w / (float)h;
 
   glm_mat4_identity(state.fps.view);
-  float zoom = 0.1f;
-  float offset_x = 7.0f;
-  float offset_y = 7.0f;
+  float zoom = 0.05f;
+  float offset_x = 14.0f;
+  float offset_y = 14.0f;
   glm_ortho(-1.0 * ratio / zoom + offset_x, 1.0 * ratio / zoom + offset_x,
             -1.0f / zoom + offset_y, 1.0f / zoom + offset_y, 0.01, 50.0,
             (vec4 *)&state.fps.view_proj);
@@ -235,9 +284,21 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
     } else if (game->cpu_agents[i].state == AGENT_MOVING) {
       unsigned c = game->cpu_agents[i].computed_path.current;
       if (c < game->cpu_agents[i].computed_path.count) {
-        glm_vec2(game->cpu_agents[i].computed_path.points[c],
-                 game->transforms[i].position);
-        game->cpu_agents[i].computed_path.current++;
+        vec2 next_pos;
+        glm_vec2(game->cpu_agents[i].computed_path.points[c], next_pos);
+        vec2 d;
+        glm_vec2_sub(next_pos, game->transforms[i].position, d);
+        vec2 s;
+        glm_vec2_sign(d, s);
+        d[0] = glm_min(fabs(d[0]), 0.1) * s[0];
+        d[1] = glm_min(fabs(d[1]), 0.1) * s[1];
+
+        glm_vec2_add(game->transforms[i].position, d,
+                     game->transforms[i].position);
+        if (game->transforms[i].position[0] == next_pos[0] &&
+            game->transforms[i].position[1] == next_pos[1]) {
+          game->cpu_agents[i].computed_path.current++;
+        }
       } else {
         game->cpu_agents[i].state = AGENT_NOTHING;
       }
@@ -246,8 +307,12 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
 
   clock_gettime(CLOCK_MONOTONIC_RAW, &end);
 
-  printf("%ld\n", (end.tv_sec - start.tv_sec) * 1000 +
-  (end.tv_nsec - start.tv_nsec) / 1000);
+  time_t t = (end.tv_sec - start.tv_sec) * 1000000 +
+             (end.tv_nsec - start.tv_nsec) / 1000;
+  t /= 1000;
+  if (t > 300) {
+    printf("Anormaly long update time... %ldms\n", t);
+  }
 
   VK_TickSystems(CL_GetRend(client));
 
@@ -293,7 +358,7 @@ bool G_Load(client_t *client, game_t *game) {
   textures[12] = G_LoadSingleTexture("../base/dirt.png");
   textures[13] = G_LoadSingleTexture("../base/Wall_single.png");
 
-  for (unsigned i = 0; i < 18; i++) {
+  for (unsigned i = 0; i < 300; i++) {
     unsigned texture = rand() % 4 * 3;
 
     struct Sprite sprite = {
@@ -327,8 +392,8 @@ bool G_Load(client_t *client, game_t *game) {
     struct Transform transform = {
         .position =
             {
-                [0] = ((float)(rand() % 8)) + 0.0f,
-                [1] = ((float)(rand() % 8)) + 2.0f,
+                [0] = ((float)(rand() % 8)) + 0.0f + 32.0f,
+                [1] = ((float)(rand() % 8)) + 2.0f + 32.0f,
                 [2] = 0.0f,
                 [3] = 1.0f,
             },
@@ -354,10 +419,10 @@ bool G_Load(client_t *client, game_t *game) {
     }
   }
 
-  for (unsigned i = 0; i < 1000; i++) {
+  for (unsigned i = 0; i < 3000; i++) {
 
-    int x = rand() % 64 + 4;
-    int y = rand() % 64 + 4;
+    int x = rand() % 128 + 4;
+    int y = rand() % 128 + 4;
 
     if (x != 25 && y != 25) {
       tiles[x][y].texture = 13;
@@ -397,8 +462,8 @@ void G_AddPawn(client_t *client, game_t *game, struct Transform *transform,
       .speed = 1.0,
       .target =
           {
-              [0] = 10.0f,
-              [1] = 10.0f,
+              [0] = 0.0f,
+              [1] = 0.0f,
           },
   };
 
