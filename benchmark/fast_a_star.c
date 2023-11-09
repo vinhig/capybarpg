@@ -261,8 +261,7 @@ void G_PathFinding(worker_t *worker, unsigned entity) {
 
       unsigned neighbor_idx = new_row * 256 + new_col;
 
-      if (!worker->open_set_bool[neighbor_idx] &&
-          !worker->closed_set[neighbor_idx] &&
+      if (!worker->closed_set[neighbor_idx] &&
           G_ValidCell(neighbors[i], G_NodeDirections[i], worker->game->tiles)) {
         float tentative_g = current->g + worker->game->tiles[neighbor_idx].cost;
 
@@ -320,8 +319,8 @@ int main(int argc, char const *argv[]) {
         .speed = 1.0,
         .target =
             {
-                [0] = 255.0f,
-                [1] = 255.0f,
+                [0] = 20.0f,
+                [1] = 25.0f,
             },
     };
 
@@ -330,18 +329,36 @@ int main(int argc, char const *argv[]) {
 
     for (unsigned x = 0; x < 256; x++) {
       for (unsigned y = 0; y < 256; y++) {
-        game.tiles[x * 256 + y].cost = 1.2;
+        game.tiles[x * 256 + y].cost = 1.0;
       }
     }
 
-    // for (unsigned i = 0; i < 3000; i++) {
-    //   int x = rand() % 128 + 4;
-    //   int y = rand() % 128 + 4;
+    unsigned room_1_count = 0;
+    unsigned *room_1 = malloc(sizeof(unsigned) * 512);
 
-    //   if (x != 25 && y != 25) {
-    //     game.tiles[x * 256 + y].cost = 999;
-    //   }
-    // }
+    G_Rectangle((ivec2){10, 10}, (ivec2){60, 20}, room_1, &room_1_count);
+
+    for (unsigned i = 0; i < room_1_count; i++) {
+      game.tiles[room_1[i]].cost = 999.0f;
+      unsigned row = room_1[i] / 256;
+      unsigned col = room_1[i] % 256;
+    }
+
+    game.tiles[room_1[9]].cost = 1.2f;
+    unsigned row = room_1[9] / 256;
+    unsigned col = room_1[9] % 256;
+
+    G_Rectangle((ivec2){10, 20}, (ivec2){60, 30}, room_1, &room_1_count);
+
+    for (unsigned i = 0; i < room_1_count; i++) {
+      game.tiles[room_1[i]].cost = 999.0f;
+      unsigned row = room_1[i] / 256;
+      unsigned col = room_1[i] % 256;
+    }
+
+    game.tiles[room_1[40]].cost = 1.2f;
+    row = room_1[40] / 256;
+    col = room_1[40] % 256;
   }
 
   worker_t worker = {

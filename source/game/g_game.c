@@ -15,7 +15,7 @@
 
 #include <SDL2/SDL_thread.h>
 
-const float G_HeuristicWeight = 1.1f;
+const float G_HeuristicWeight = 1.0f;
 
 vec2 G_NodeDirections[8] = {
     [0] = {1, 0}, [1] = {0, 1},  [2] = {0, -1},  [3] = {-1, 0},
@@ -216,7 +216,7 @@ void G_PathFinding(worker_t *worker, unsigned entity) {
     unsigned i = 0;
     unsigned limit = 8;
     bool total_exploration = true;
-    if (initial_distance >= 10.0 && worker->closed_set_count < 6) {
+    if (false) {
       vec2 d;
       glm_vec2_sub((float *)target, current->position, d);
       vec2 s;
@@ -254,8 +254,7 @@ void G_PathFinding(worker_t *worker, unsigned entity) {
 
       unsigned neighbor_idx = new_row * 256 + new_col;
 
-      if (!worker->open_set_bool[neighbor_idx] &&
-          !worker->closed_set[neighbor_idx] &&
+      if (!worker->closed_set[neighbor_idx] &&
           G_ValidCell(neighbors[i], G_NodeDirections[i], worker->game->tiles)) {
         float tentative_g = current->g + worker->game->tiles[neighbor_idx].cost;
 
@@ -326,7 +325,7 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
   float ratio = (float)w / (float)h;
 
   glm_mat4_identity(state.fps.view);
-  float zoom = 0.05f;
+  float zoom = 0.01f;
   float offset_x = 14.0f;
   float offset_y = 14.0f;
   glm_ortho(-1.0 * ratio / zoom + offset_x, 1.0 * ratio / zoom + offset_x,
@@ -348,8 +347,8 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
         glm_vec2_sub(next_pos, game->transforms[i].position, d);
         vec2 s;
         glm_vec2_sign(d, s);
-        d[0] = glm_min(fabs(d[0]), 0.1) * s[0];
-        d[1] = glm_min(fabs(d[1]), 0.1) * s[1];
+        d[0] = glm_min(fabs(d[0]), 1.0) * s[0];
+        d[1] = glm_min(fabs(d[1]), 1.0) * s[1];
 
         glm_vec2_add(game->transforms[i].position, d,
                      game->transforms[i].position);
@@ -368,7 +367,7 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
   time_t t = (end.tv_sec - start.tv_sec) * 1000000 +
              (end.tv_nsec - start.tv_nsec) / 1000;
   t /= 1000;
-  if (t > 100) {
+  if (t > 10) {
     printf("Anormaly long update time... %ldms\n", t);
   }
 
@@ -416,7 +415,7 @@ bool G_Load(client_t *client, game_t *game) {
   textures[12] = G_LoadSingleTexture("../base/dirt.png");
   textures[13] = G_LoadSingleTexture("../base/Wall_single.png");
 
-  for (unsigned i = 0; i < 300; i++) {
+  for (unsigned i = 0; i < 100; i++) {
     unsigned texture = rand() % 4 * 3;
 
     struct Sprite sprite = {
@@ -450,8 +449,8 @@ bool G_Load(client_t *client, game_t *game) {
     struct Transform transform = {
         .position =
             {
-                [0] = ((float)(rand() % 8)) + 0.0f + 32.0f,
-                [1] = ((float)(rand() % 8)) + 2.0f + 32.0f,
+                [0] = ((float)(rand() % 8)) + 0.0f + 128.0f,
+                [1] = ((float)(rand() % 8)) + 2.0f + 128.0f,
                 [2] = 0.0f,
                 [3] = 1.0f,
             },
@@ -479,54 +478,40 @@ bool G_Load(client_t *client, game_t *game) {
     }
   }
 
-  // for (unsigned i = 0; i < 3000; i++) {
+  unsigned room_1_count = 0;
+  unsigned *room_1 = malloc(sizeof(unsigned) * 512);
 
-  //   int x = rand() % 128 + 4;
-  //   int y = rand() % 128 + 4;
+  G_Rectangle((ivec2){10, 10}, (ivec2){60, 20}, room_1, &room_1_count);
 
-  //   if (x != 25 && y != 25) {
-  //     tiles[x][y].texture = 13;
-  //     tiles[x][y].cost = 999;
-
-  //     game->tiles[y * 256 + x].cost = 999.0f;
-  //   }
-  // }
-
-  for (unsigned i = 14; i < 25; i++) {
-    tiles[i][4].texture = 13;
-    tiles[i][4].cost = 999.0f;
-
-    game->tiles[4 * 256 + i].cost = 999.0f;
+  for (unsigned i = 0; i < room_1_count; i++) {
+    game->tiles[room_1[i]].cost = 999.0f;
+    unsigned row = room_1[i] / 256;
+    unsigned col = room_1[i] % 256;
+    tiles[col][row].cost = 999.0f;
+    tiles[col][row].texture = 13;
   }
 
-  for (unsigned i = 14; i < 25; i++) {
-    tiles[i][9].texture = 13;
-    tiles[i][9].cost = 999.0f;
+  game->tiles[room_1[9]].cost = 1.2f;
+  unsigned row = room_1[9] / 256;
+  unsigned col = room_1[9] % 256;
+  tiles[col][row].cost = 1.2f;
+  tiles[col][row].texture = 12;
 
-    game->tiles[9 * 256 + i].cost = 999.0f;
+  G_Rectangle((ivec2){10, 20}, (ivec2){60, 30}, room_1, &room_1_count);
+
+  for (unsigned i = 0; i < room_1_count; i++) {
+    game->tiles[room_1[i]].cost = 999.0f;
+    unsigned row = room_1[i] / 256;
+    unsigned col = room_1[i] % 256;
+    tiles[col][row].cost = 999.0f;
+    tiles[col][row].texture = 13;
   }
 
-  for (unsigned i = 4; i < 10; i++) {
-    tiles[25][i].texture = 13;
-    tiles[25][i].cost = 999.0f;
-
-    game->tiles[i * 256 + 25].cost = 999.0f;
-  }
-
-  for (unsigned i = 4; i < 10; i++) {
-    tiles[14][i].texture = 13;
-    tiles[14][i].cost = 999.0f;
-
-    game->tiles[i * 256 + 14].cost = 999.0f;
-  }
-
-  // The door
-  unsigned x = 22;
-  unsigned y = 4;
-  tiles[x][y].texture = 0;
-  tiles[x][y].cost = 1.0f;
-
-  game->tiles[y * 256 + x].cost = 1.0f;
+  game->tiles[room_1[40]].cost = 1.2f;
+  row = room_1[40] / 256;
+  col = room_1[40] % 256;
+  tiles[col][row].cost = 1.2f;
+  tiles[col][row].texture = 12;
 
   VK_SetMap(CL_GetRend(client), &tiles[0][0], 256, 256);
 
@@ -561,7 +546,7 @@ void G_AddPawn(client_t *client, game_t *game, struct Transform *transform,
       .target =
           {
               [0] = 20.0f,
-              [1] = 6.0f,
+              [1] = 25.0f,
           },
   };
 

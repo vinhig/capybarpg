@@ -44,3 +44,5 @@ game_state_t G_TickGame(client_t *client, game_t *game);
 void G_DestroyGame(game_t *game);
 
 bool G_Load(client_t *client, game_t *game);
+
+void G_Rectangle(ivec2 start, ivec2 end, unsigned *indices, unsigned *count);

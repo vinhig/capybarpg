@@ -64,7 +64,9 @@ shaders = declare_dependency(
 queue = executable('queue', 'benchmark/fast_queue.c', 'source/common/c_queue.c',)
 
 a_star = executable('a_star',
-  'benchmark/fast_a_star.c', 'source/common/c_queue.c',
+  'benchmark/fast_a_star.c',
+  'source/common/c_queue.c',
+  'source/game/g_shape.c',
   include_directories: [include_directories('source/'), include_directories('external/')],
   dependencies: [m],
   link_args: '-ffast-math', 
@@ -79,6 +81,7 @@ exe = executable('maidenless',
   'source/client/cl_client.c',
 
   'source/game/g_game.c',
+  'source/game/g_shape.c',
 
   'source/common/c_queue.c',
 
