@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include "client/cl_client.h"
+#include "common/c_queue.h"
 #include "game/g_game.h"
 #include "stbi_image.h"
 #include "vk/vk_system.h"
@@ -14,11 +15,22 @@
 
 #include <SDL2/SDL_thread.h>
 
+const float G_HeuristicWeight = 1.1f;
+
+vec2 G_NodeDirections[8] = {
+    [0] = {1, 0}, [1] = {0, 1},  [2] = {0, -1},  [3] = {-1, 0},
+    [4] = {1, 1}, [5] = {-1, 1}, [6] = {-1, -1}, [7] = {1, -1},
+};
+
 typedef struct cpu_path_t {
   vec2 *points;
   unsigned count;
   unsigned current;
 } cpu_path_t;
+
+typedef struct cpu_tile_t {
+  float cost;
+} cpu_tile_t;
 
 typedef struct cpu_agent_t {
   vec2 target;
@@ -30,7 +42,7 @@ typedef struct cpu_agent_t {
   } state;
 
   cpu_path_t computed_path;
-} cpu_agent_t;
+} __attribute__((aligned(16))) cpu_agent_t;
 
 typedef struct node_t node_t;
 
@@ -41,15 +53,16 @@ struct node_t {
   float f;
 
   node_t *next;
-};
+} __attribute__((aligned(16)));
 
 typedef struct worker_t {
   // Stuff when path finding is needed
-  node_t *open_set;
-  node_t *closed_set;
+  queue_t open_set;
+  node_t *nodes;
+  unsigned *closed_set;
+  unsigned *open_set_bool;
 
   unsigned open_set_count;
-  unsigned closed_set_count;
 
   game_t *game;
 } worker_t;
@@ -61,7 +74,8 @@ struct game_t {
   cpu_agent_t *cpu_agents;
   struct Agent *gpu_agents;
   struct Transform *transforms;
-  struct Tile *tiles;
+  struct Tile *gpu_tiles;
+  cpu_tile_t *tiles;
   unsigned entity_count;
 
   worker_t workers[8];
@@ -76,38 +90,38 @@ void G_PrintNode(node_t *node) {
   printf("};\n");
 }
 
-// float G_Distance(vec2 a, vec2 b) {
-// return sqrtf(powf(a[0] - b[0], 2.0) + powf(a[1] - b[1], 2.0));
-// }
+float G_Distance(const vec2 a, const vec2 b) {
+  // The Diagonal distance
+  // from https://theory.stanford.edu/~amitp/GameProgramming/Heuristics.html#S7
+  float dx = fabsf(a[0] - b[0]);
+  float dy = fabsf(a[1] - b[1]);
 
-float G_Distance(vec2 a, vec2 b) {
-  return fabs(a[0] - b[0]) + fabs(a[1] - b[1]);
+  float D1 = 1.0;   // Cost of moving horizontally
+  float D2 = 1.141; // Cost of moving diagonally
+
+  return D1 * (dx + dy) + (D2 - 2 * D1) * fminf(dx, dy);
 }
 
-bool G_ValidCell(vec2 position, vec2 d, struct Tile *tiles) {
-  if (!(position[0] >= 0 && position[1] >= 0 && position[0] < 256 &&
-        position[1] < 256)) {
-    return false;
-  }
-
+static bool G_ValidCell(const vec2 position, const unsigned d,
+                        const cpu_tile_t *const tiles) {
   float cost = tiles[(int)(position[1] * 256 + position[0])].cost;
   if (cost == 999) {
     return false;
   }
 
   // Check for diagonal
-  if (fabs(d[0]) == 1 && fabs(d[1]) == 1) {
-    float through_a;
-    float through_b;
+  if (d >= 4) {
+    float through_a = 0.0f;
+    float through_b = 0.0f;
     {
-      unsigned check_col = position[0] - d[0] + d[0];
-      unsigned check_row = position[1] - d[1];
+      unsigned check_col = position[0];
+      unsigned check_row = position[1] - G_NodeDirections[d][1];
 
       through_a = tiles[check_row * 256 + check_col].cost;
     }
     {
-      unsigned check_row = position[0] - d[0];
-      unsigned check_col = position[1] - d[1] + d[1];
+      unsigned check_row = position[0] - G_NodeDirections[d][0];
+      unsigned check_col = position[1];
 
       through_b = tiles[check_row * 256 + check_col].cost;
     }
@@ -115,69 +129,65 @@ bool G_ValidCell(vec2 position, vec2 d, struct Tile *tiles) {
     if (through_a == 999.0f || through_b == 999.0f) {
       return false;
     }
-
-    // exit(-1);
   }
 
   return true;
 }
 
+int G_CompareNodes(const void *a, const void *b) {
+  return ((node_t *)b)->f - ((node_t *)a)->f;
+}
+
 void G_PathFinding(worker_t *worker, unsigned entity) {
-  node_t nodes[256][256];
-
   for (unsigned x = 0; x < 256; x++) {
     for (unsigned y = 0; y < 256; y++) {
-      nodes[x][y].position[0] = (float)x;
-      nodes[x][y].position[1] = (float)y;
-      nodes[x][y].f = INT32_MAX;
-      nodes[x][y].g = INT32_MAX;
-      nodes[x][y].next = NULL;
+      unsigned n_idx = x + y * 256;
+      worker->nodes[n_idx].position[0] = (float)x;
+      worker->nodes[n_idx].position[1] = (float)y;
+      worker->nodes[n_idx].f = INT32_MAX;
+      worker->nodes[n_idx].g = INT32_MAX;
+      worker->nodes[n_idx].next = NULL;
     }
   }
 
-  bool closed_list_bool[256][256];
-  for (unsigned x = 0; x < 256; x++) {
-    for (unsigned y = 0; y < 256; y++) {
-      closed_list_bool[x][y] = false;
-    }
-  }
+  worker->open_set.size = 0;
+
+  memset(worker->open_set.data, 0, 256 * 256 * sizeof(unsigned));
+  memset(worker->closed_set, 0, 256 * 256 * sizeof(unsigned));
+  memset(worker->open_set_bool, 0, 256 * 256 * sizeof(unsigned));
 
   cpu_agent_t *agent = &worker->game->cpu_agents[entity];
+  const vec2 target = {
+      [0] = agent->target[0],
+      [1] = agent->target[1],
+  };
   struct Transform *transform = &worker->game->transforms[entity];
-  nodes[(int)transform->position[0]][(int)transform->position[1]].f =
-      G_Distance(transform->position, agent->target);
-  nodes[(int)transform->position[0]][(int)transform->position[1]].h =
-      G_Distance(transform->position, agent->target);
-  nodes[(int)transform->position[0]][(int)transform->position[1]].g = 0.0f;
 
-  node_t *open_list[256 * 256];
-  open_list[0] =
-      &nodes[(int)transform->position[0]][(int)transform->position[1]];
-  unsigned open_list_count = 1;
+  float d_s = G_Distance(transform->position, target);
+  unsigned idx =
+      (int)transform->position[0] + (int)transform->position[1] * 256;
+
+  worker->nodes[idx].f = d_s;
+  worker->nodes[idx].h = G_HeuristicWeight * d_s;
+  worker->nodes[idx].g = 0.0f;
+
+  // worker->open_set[0] = &worker->nodes[idx];
+  worker->open_set_count = 1;
+  C_QueueEnqueue(&worker->open_set, &worker->nodes[idx]);
 
   int iteration = 0;
-  while (open_list_count > 0) {
+  while (worker->open_set_count > 0) {
     iteration++;
 
-    unsigned current_idx = 0;
-    for (unsigned i = 0; i < open_list_count; i++) {
-      if (open_list[i]->f < open_list[current_idx]->f) {
-        current_idx = i;
-      }
-    }
+    node_t *current = C_QueueDequeue(&worker->open_set);
 
-    node_t *current = open_list[current_idx];
+    worker->open_set_count--;
 
-    for (unsigned i = current_idx; i < open_list_count - 1; i++) {
-      open_list[i] = open_list[i + 1];
-    }
-    open_list_count--;
+    worker->closed_set[(int)current->position[1] * 256 +
+                       (int)current->position[0]] = true;
 
-    closed_list_bool[(int)current->position[0]][(int)current->position[1]] =
-        true;
-
-    if (current->position[0] == agent->target[0] &&
-        current->position[1] == agent->target[1]) {
+    if (current->position[0] == target[0] &&
+        current->position[1] == target[1]) {
       node_t *back = current;
       while (back != NULL) {
         agent->computed_path.count++;
@@ -196,44 +206,44 @@ void G_PathFinding(worker_t *worker, unsigned entity) {
       return;
     }
 
-    vec2 directions[8];
-    glm_vec2(&(vec2){1, 0}[0], directions[0]);
-    glm_vec2(&(vec2){0, 1}[0], directions[1]);
-    glm_vec2(&(vec2){0, -1}[0], directions[2]);
-    glm_vec2(&(vec2){-1, 0}[0], directions[3]);
-    glm_vec2(&(vec2){1, 1}[0], directions[4]);
-    glm_vec2(&(vec2){-1, 1}[0], directions[5]);
-    glm_vec2(&(vec2){-1, -1}[0], directions[6]);
-    glm_vec2(&(vec2){1, -1}[0], directions[7]);
-
     vec2 neighbors[8];
-    glm_vec2_add(current->position, directions[0], neighbors[0]);
-    glm_vec2_add(current->position, directions[1], neighbors[1]);
-    glm_vec2_add(current->position, directions[2], neighbors[2]);
-    glm_vec2_add(current->position, directions[3], neighbors[3]);
-    glm_vec2_add(current->position, directions[4], neighbors[4]);
-    glm_vec2_add(current->position, directions[5], neighbors[5]);
-    glm_vec2_add(current->position, directions[6], neighbors[6]);
-    glm_vec2_add(current->position, directions[7], neighbors[7]);
+    glm_vec2_add(current->position, G_NodeDirections[0], neighbors[0]);
+    glm_vec2_add(current->position, G_NodeDirections[1], neighbors[1]);
+    glm_vec2_add(current->position, G_NodeDirections[2], neighbors[2]);
+    glm_vec2_add(current->position, G_NodeDirections[3], neighbors[3]);
+    glm_vec2_add(current->position, G_NodeDirections[4], neighbors[4]);
+    glm_vec2_add(current->position, G_NodeDirections[5], neighbors[5]);
+    glm_vec2_add(current->position, G_NodeDirections[6], neighbors[6]);
+    glm_vec2_add(current->position, G_NodeDirections[7], neighbors[7]);
 
     for (unsigned i = 0; i < 8; i++) {
-      int new_row = (int)neighbors[i][0];
-      int new_col = (int)neighbors[i][1];
+      int new_col = (int)neighbors[i][0];
+      int new_row = (int)neighbors[i][1];
 
-      if (G_ValidCell(neighbors[i], directions[i], worker->game->tiles) &&
-          !closed_list_bool[new_row][new_col]) {
-        float tentative_g =
-            current->g + worker->game->tiles[new_row * 256 + new_col].cost;
+      if (!(new_row >= 0 && new_col >= 0 && new_row < 256 && new_col < 256)) {
+        continue;
+      }
 
-        if (tentative_g < nodes[new_row][new_col].g) {
-          float h = G_Distance(neighbors[i], agent->target);
+      unsigned neighbor_idx = new_row * 256 + new_col;
 
-          nodes[new_row][new_col].g = tentative_g;
-          nodes[new_row][new_col].f = tentative_g + h;
-          nodes[new_row][new_col].next = current;
+      if (!worker->open_set_bool[neighbor_idx] &&
+          !worker->closed_set[neighbor_idx] &&
+          G_ValidCell(neighbors[i], i, worker->game->tiles)) {
+        float tentative_g = current->g + worker->game->tiles[neighbor_idx].cost;
 
-          open_list[open_list_count] = &nodes[new_row][new_col];
-          open_list_count++;
+        if (tentative_g < worker->nodes[neighbor_idx].g) {
+          float h = G_Distance(neighbors[i], target);
+          h *= h;
+
+          worker->nodes[neighbor_idx].g = tentative_g;
+          worker->nodes[neighbor_idx].f = tentative_g + G_HeuristicWeight * h;
+          worker->nodes[neighbor_idx].next = current;
+
+          // worker->open_set[worker->open_set_count] =
+          // &worker->nodes[neighbor_idx];
+          C_QueueEnqueue(&worker->open_set, &worker->nodes[neighbor_idx]);
+          worker->open_set_bool[neighbor_idx] = true;
+          worker->open_set_count++;
         }
       }
     }
@@ -246,9 +256,18 @@ game_t *G_CreateGame(client_t *client, char *base) {
   // At the moment, randomly spawn 3000 pawns. And make them wander.
   game_t *game = calloc(1, sizeof(game_t));
 
-  game->workers[0].open_set = calloc(256 * 256, sizeof(node_t));
-  game->workers[0].closed_set = calloc(256 * 256, sizeof(node_t));
-  game->workers[0].game = game;
+  game->cpu_agents = calloc(3000, sizeof(cpu_agent_t));
+  game->tiles = calloc(256 * 256, sizeof(cpu_tile_t));
+
+  game->workers[0] = (worker_t){
+      .game = game,
+      .nodes = calloc(256 * 256, sizeof(node_t)),
+      .closed_set = calloc(256 * 256, sizeof(unsigned)),
+      .open_set_bool = calloc(256 * 256, sizeof(unsigned)),
+      .open_set_count = 0,
+  };
+
+  C_QueueNew(&game->workers[0].open_set, G_CompareNodes, 256 * 256);
 
   // Add "model" system at the end, just compute the model matrix for each
   // transform
@@ -258,7 +277,18 @@ game_t *G_CreateGame(client_t *client, char *base) {
   return game;
 }
 
-void G_DestroyGame(game_t *game) { free(game); }
+void G_DestroyGame(game_t *game) {
+  for (unsigned i = 0; i < 8; i++) {
+    if (game->workers[i].closed_set) {
+      free(game->workers[i].closed_set);
+      C_QueueDestroy(&game->workers[i].open_set);
+      free(game->workers[i].nodes);
+    }
+  }
+  free(game->cpu_agents);
+  free(game->tiles);
+  free(game);
+}
 
 game_state_t G_TickGame(client_t *client, game_t *game) {
   game_state_t state;
@@ -310,7 +340,7 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
   time_t t = (end.tv_sec - start.tv_sec) * 1000000 +
              (end.tv_nsec - start.tv_nsec) / 1000;
   t /= 1000;
-  if (t > 300) {
+  if (t > 100) {
     printf("Anormaly long update time... %ldms\n", t);
   }
 
@@ -416,6 +446,8 @@ bool G_Load(client_t *client, game_t *game) {
     for (unsigned y = 0; y < 256; y++) {
       tiles[x][y].texture = 12;
       tiles[x][y].cost = 1.2;
+
+      game->tiles[y * 256 + x].cost = 1.2;
     }
   }
 
@@ -427,6 +459,8 @@ bool G_Load(client_t *client, game_t *game) {
     if (x != 25 && y != 25) {
       tiles[x][y].texture = 13;
       tiles[x][y].cost = 999;
+
+      game->tiles[y * 256 + x].cost = 999.0f;
     }
   }
 
@@ -435,7 +469,7 @@ bool G_Load(client_t *client, game_t *game) {
   // Get the mapped data from the renderer
   game->gpu_agents = VK_GetAgents(CL_GetRend(client));
   game->transforms = VK_GetTransforms(CL_GetRend(client));
-  game->tiles = VK_GetMap(CL_GetRend(client));
+  game->gpu_tiles = VK_GetMap(CL_GetRend(client));
 
   return true;
 }
@@ -463,7 +497,7 @@ void G_AddPawn(client_t *client, game_t *game, struct Transform *transform,
       .target =
           {
               [0] = 0.0f,
-              [1] = 0.0f,
+              [1] = 10.0f,
           },
   };
 
