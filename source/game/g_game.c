@@ -15,7 +15,9 @@
 
 #include <SDL2/SDL_thread.h>
 
-const float G_HeuristicWeight = 1.0f;
+#define CORRIDOR 0
+
+const float G_HeuristicWeight = 1.1f;
 
 vec2 G_NodeDirections[8] = {
     [0] = {1, 0}, [1] = {0, 1},  [2] = {0, -1},  [3] = {-1, 0},
@@ -325,9 +327,9 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
   float ratio = (float)w / (float)h;
 
   glm_mat4_identity(state.fps.view);
-  float zoom = 0.01f;
-  float offset_x = 14.0f;
-  float offset_y = 14.0f;
+  float zoom = 0.04f;
+  float offset_x = 18.0f;
+  float offset_y = 18.0f;
   glm_ortho(-1.0 * ratio / zoom + offset_x, 1.0 * ratio / zoom + offset_x,
             -1.0f / zoom + offset_y, 1.0f / zoom + offset_y, 0.01, 50.0,
             (vec4 *)&state.fps.view_proj);
@@ -347,8 +349,8 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
         glm_vec2_sub(next_pos, game->transforms[i].position, d);
         vec2 s;
         glm_vec2_sign(d, s);
-        d[0] = glm_min(fabs(d[0]), 1.0) * s[0];
-        d[1] = glm_min(fabs(d[1]), 1.0) * s[1];
+        d[0] = glm_min(fabs(d[0]), 0.8) * s[0];
+        d[1] = glm_min(fabs(d[1]), 0.8) * s[1];
 
         glm_vec2_add(game->transforms[i].position, d,
                      game->transforms[i].position);
@@ -415,7 +417,7 @@ bool G_Load(client_t *client, game_t *game) {
   textures[12] = G_LoadSingleTexture("../base/dirt.png");
   textures[13] = G_LoadSingleTexture("../base/Wall_single.png");
 
-  for (unsigned i = 0; i < 100; i++) {
+  for (unsigned i = 0; i < 300; i++) {
     unsigned texture = rand() % 4 * 3;
 
     struct Sprite sprite = {
@@ -478,40 +480,69 @@ bool G_Load(client_t *client, game_t *game) {
     }
   }
 
-  unsigned room_1_count = 0;
-  unsigned *room_1 = malloc(sizeof(unsigned) * 512);
+  if (CORRIDOR) {
+    unsigned room_1_count = 0;
+    unsigned *room_1 = malloc(sizeof(unsigned) * 512);
 
-  G_Rectangle((ivec2){10, 10}, (ivec2){60, 20}, room_1, &room_1_count);
+    G_Rectangle((ivec2){10, 10}, (ivec2){60, 20}, room_1, &room_1_count);
 
-  for (unsigned i = 0; i < room_1_count; i++) {
-    game->tiles[room_1[i]].cost = 999.0f;
-    unsigned row = room_1[i] / 256;
-    unsigned col = room_1[i] % 256;
-    tiles[col][row].cost = 999.0f;
-    tiles[col][row].texture = 13;
+    for (unsigned i = 0; i < room_1_count; i++) {
+      game->tiles[room_1[i]].cost = 999.0f;
+      unsigned row = room_1[i] / 256;
+      unsigned col = room_1[i] % 256;
+      tiles[col][row].cost = 999.0f;
+      tiles[col][row].texture = 13;
+    }
+
+    game->tiles[room_1[9]].cost = 1.2f;
+    unsigned row = room_1[9] / 256;
+    unsigned col = room_1[9] % 256;
+    tiles[col][row].cost = 1.2f;
+    tiles[col][row].texture = 12;
+
+    G_Rectangle((ivec2){10, 20}, (ivec2){60, 30}, room_1, &room_1_count);
+
+    for (unsigned i = 0; i < room_1_count; i++) {
+      game->tiles[room_1[i]].cost = 999.0f;
+      unsigned row = room_1[i] / 256;
+      unsigned col = room_1[i] % 256;
+      tiles[col][row].cost = 999.0f;
+      tiles[col][row].texture = 13;
+    }
+
+    game->tiles[room_1[40]].cost = 1.2f;
+    row = room_1[40] / 256;
+    col = room_1[40] % 256;
+    tiles[col][row].cost = 1.2f;
+    tiles[col][row].texture = 12;
+
+    G_Rectangle((ivec2){10, 30}, (ivec2){60, 40}, room_1, &room_1_count);
+
+    for (unsigned i = 0; i < room_1_count; i++) {
+      game->tiles[room_1[i]].cost = 999.0f;
+      unsigned row = room_1[i] / 256;
+      unsigned col = room_1[i] % 256;
+      tiles[col][row].cost = 999.0f;
+      tiles[col][row].texture = 13;
+    }
+
+    game->tiles[room_1[9]].cost = 1.2f;
+    row = room_1[9] / 256;
+    col = room_1[9] % 256;
+    tiles[col][row].cost = 1.2f;
+    tiles[col][row].texture = 12;
+  } else {
+    for (unsigned i = 0; i < 9000; i++) {
+      unsigned row = rand() % 256;
+      unsigned col = rand() % 256;
+
+      if (row != 0 && col != 0) {
+        game->tiles[row * 256 + col].cost = 999.0f;
+        tiles[col][row].cost = 999.0f;
+        tiles[col][row].texture = 13;
+      }
+    }
   }
-
-  game->tiles[room_1[9]].cost = 1.2f;
-  unsigned row = room_1[9] / 256;
-  unsigned col = room_1[9] % 256;
-  tiles[col][row].cost = 1.2f;
-  tiles[col][row].texture = 12;
-
-  G_Rectangle((ivec2){10, 20}, (ivec2){60, 30}, room_1, &room_1_count);
-
-  for (unsigned i = 0; i < room_1_count; i++) {
-    game->tiles[room_1[i]].cost = 999.0f;
-    unsigned row = room_1[i] / 256;
-    unsigned col = room_1[i] % 256;
-    tiles[col][row].cost = 999.0f;
-    tiles[col][row].texture = 13;
-  }
-
-  game->tiles[room_1[40]].cost = 1.2f;
-  row = room_1[40] / 256;
-  col = room_1[40] % 256;
-  tiles[col][row].cost = 1.2f;
-  tiles[col][row].texture = 12;
 
   VK_SetMap(CL_GetRend(client), &tiles[0][0], 256, 256);
 
@@ -545,8 +576,13 @@ void G_AddPawn(client_t *client, game_t *game, struct Transform *transform,
       .speed = 1.0,
       .target =
           {
-              [0] = 20.0f,
-              [1] = 25.0f,
+#if CORRIDOR
+              [0] = 55.0f,
+              [1] = 35.0f,
+#else
+              [0] = 0.0f,
+              [1] = 0.0f,
+#endif
           },
   };
 

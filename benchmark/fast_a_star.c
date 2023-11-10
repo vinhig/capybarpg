@@ -48,10 +48,10 @@ typedef struct cpu_agent_t {
 typedef struct node_t node_t;
 
 struct node_t {
+  float f;
   vec2 position;
   float g;
   float h;
-  float f;
 
   node_t *next;
 } __attribute__((aligned(16)));
@@ -221,7 +221,7 @@ void G_PathFinding(worker_t *worker, unsigned entity) {
     unsigned i = 0;
     unsigned limit = 8;
     bool total_exploration = true;
-    if (initial_distance >= 10.0 && worker->closed_set_count < 6) {
+    if (false) {
       vec2 d;
       glm_vec2_sub((float *)target, current->position, d);
       vec2 s;
@@ -235,8 +235,6 @@ void G_PathFinding(worker_t *worker, unsigned entity) {
         limit = 9;
         i = 8;
         total_exploration = false;
-      } else {
-        total_exploration = true;
       }
     }
 
@@ -319,46 +317,24 @@ int main(int argc, char const *argv[]) {
         .speed = 1.0,
         .target =
             {
-                [0] = 20.0f,
-                [1] = 25.0f,
+#if CORRIDOR
+              [0] = 55.0f,
+              [1] = 35.0f,
+#else
+              [0] = 0.0f,
+              [1] = 0.0f,
+#endif
             },
     };
 
     game.transforms[i] = transform;
     game.cpu_agents[i] = cpu_agent;
+  }
 
-    for (unsigned x = 0; x < 256; x++) {
-      for (unsigned y = 0; y < 256; y++) {
-        game.tiles[x * 256 + y].cost = 1.0;
-      }
+  for (unsigned x = 0; x < 256; x++) {
+    for (unsigned y = 0; y < 256; y++) {
+      game.tiles[x * 256 + y].cost = 1.0;
     }
-
-    unsigned room_1_count = 0;
-    unsigned *room_1 = malloc(sizeof(unsigned) * 512);
-
-    G_Rectangle((ivec2){10, 10}, (ivec2){60, 20}, room_1, &room_1_count);
-
-    for (unsigned i = 0; i < room_1_count; i++) {
-      game.tiles[room_1[i]].cost = 999.0f;
-      unsigned row = room_1[i] / 256;
-      unsigned col = room_1[i] % 256;
-    }
-
-    game.tiles[room_1[9]].cost = 1.2f;
-    unsigned row = room_1[9] / 256;
-    unsigned col = room_1[9] % 256;
-
-    G_Rectangle((ivec2){10, 20}, (ivec2){60, 30}, room_1, &room_1_count);
-
-    for (unsigned i = 0; i < room_1_count; i++) {
-      game.tiles[room_1[i]].cost = 999.0f;
-      unsigned row = room_1[i] / 256;
-      unsigned col = room_1[i] % 256;
-    }
-
-    game.tiles[room_1[40]].cost = 1.2f;
-    row = room_1[40] / 256;
-    col = room_1[40] % 256;
   }
 
   worker_t worker = {
@@ -368,6 +344,35 @@ int main(int argc, char const *argv[]) {
       .open_set_bool = calloc(256 * 256, sizeof(unsigned)),
       .open_set_count = 0,
   };
+
+  if (argv[1][0] == 'a') {
+
+    unsigned room_1_count = 0;
+    unsigned *room_1 = malloc(sizeof(unsigned) * 512);
+
+    G_Rectangle((ivec2){10, 10}, (ivec2){60, 20}, room_1, &room_1_count);
+
+    for (unsigned i = 0; i < room_1_count; i++) {
+      game.tiles[room_1[i]].cost = 999.0f;
+    }
+
+    game.tiles[room_1[9]].cost = 1.2f;
+
+    G_Rectangle((ivec2){10, 20}, (ivec2){60, 30}, room_1, &room_1_count);
+
+    for (unsigned i = 0; i < room_1_count; i++) {
+      game.tiles[room_1[i]].cost = 999.0f;
+    }
+
+    game.tiles[room_1[40]].cost = 1.2f;
+  } else if (argv[1][0] == 'r') {
+    for (unsigned i = 0; i < 9000; i++) {
+      unsigned row = rand() % 256;
+      unsigned col = rand() % 256;
+
+      game.tiles[row * 256 + col].cost = 999.0f;
+    }
+  }
 
   C_QueueNew(&worker.open_set, G_CompareNodes, 256 * 256);
 
