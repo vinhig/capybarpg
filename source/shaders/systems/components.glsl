@@ -38,7 +38,7 @@ struct Agent {
 #define agent_signature 1 << 3
 
 struct Tile {
-  float cost;
+  uint wall;
   uint texture;
 
   uint selected;

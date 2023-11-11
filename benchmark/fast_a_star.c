@@ -14,9 +14,7 @@
 
 #include <string.h>
 
-unsigned max_open_set_count = 0;
-
-const float G_HeuristicWeight = 1.1f;
+#define CORRIDOR 1
 
 vec2 G_NodeDirections[8] = {
     [0] = {1, 0}, [1] = {0, 1},  [2] = {0, -1},  [3] = {-1, 0},
@@ -30,7 +28,7 @@ typedef struct cpu_path_t {
 } cpu_path_t;
 
 typedef struct cpu_tile_t {
-  float cost;
+  unsigned wall;
 } cpu_tile_t;
 
 typedef struct cpu_agent_t {
@@ -48,19 +46,30 @@ typedef struct cpu_agent_t {
 typedef struct node_t node_t;
 
 struct node_t {
-  float f;
   vec2 position;
   float g;
   float h;
+  float f;
 
   node_t *next;
 } __attribute__((aligned(16)));
+
+typedef enum node_state_t {
+  NODE_NOTHING,
+  NODE_OPENED,
+  NODE_CLOSED,
+  NODE_PRUNED,
+} node_state_t;
 
 typedef struct worker_t {
   // Stuff when path finding is needed
   queue_t open_set;
   node_t *nodes;
-  unsigned *closed_set;
+  // 0 means nothing
+  // 1 means in open set
+  // 2 means in closed set
+  // 3 means pruned
+  unsigned *state_set;
   unsigned *open_set_bool;
 
   unsigned open_set_count;
@@ -95,44 +104,42 @@ void G_PrintNode(node_t *node) {
 // { return sqrtf(powf(a[0] - b[0], 2.0) + powf(a[1] - b[1], 2.0));
 // }
 
-__attribute__((always_inline)) inline static float G_Distance(const vec2 a,
-                                                              const vec2 b) {
+float G_Distance(const vec2 a, const vec2 b) {
   // The Diagonal distance
   // from https://theory.stanford.edu/~amitp/GameProgramming/Heuristics.html#S7
   float dx = fabsf(a[0] - b[0]);
   float dy = fabsf(a[1] - b[1]);
 
-  float D1 = 1.0;   // Cost of moving horizontally
-  float D2 = 1.141; // Cost of moving diagonally
+  float D1 = 1.0;         // Cost of moving horizontally
+  float D2 = sqrtf(2.0f); // Cost of moving diagonally
 
   return D1 * (dx + dy) + (D2 - 2 * D1) * fminf(dx, dy);
 }
 
 static bool G_ValidCell(const vec2 position, const vec2 d,
                         const cpu_tile_t *const tiles) {
-  float cost = tiles[(int)(position[1] * 256 + position[0])].cost;
-  if (cost == 999) {
+  if (tiles[(int)(position[1] * 256 + position[0])].wall) {
     return false;
   }
 
   // Check for diagonal
   if (fabsf(d[0]) == 1 && fabsf(d[1]) == 1) {
-    float through_a = 0.0f;
-    float through_b = 0.0f;
+    unsigned through_a = 0.0f;
+    unsigned through_b = 0.0f;
     {
       unsigned check_col = position[0];
       unsigned check_row = position[1] - d[1];
 
-      through_a = tiles[check_row * 256 + check_col].cost;
+      through_a = tiles[check_row * 256 + check_col].wall;
     }
     {
       unsigned check_row = position[0] - d[0];
       unsigned check_col = position[1];
 
-      through_b = tiles[check_row * 256 + check_col].cost;
+      through_b = tiles[check_row * 256 + check_col].wall;
     }
 
-    if (through_a == 999.0f || through_b == 999.0f) {
+    if (through_a || through_b) {
       return false;
     }
   }
@@ -141,7 +148,7 @@ static bool G_ValidCell(const vec2 position, const vec2 d,
 }
 
 int G_CompareNodes(const void *a, const void *b) {
-  return ((node_t *)a)->f - ((node_t *)b)->f;
+  return ((node_t *)b)->f - ((node_t *)a)->f;
 }
 
 void G_PathFinding(worker_t *worker, unsigned entity) {
@@ -150,16 +157,17 @@ void G_PathFinding(worker_t *worker, unsigned entity) {
       unsigned n_idx = x + y * 256;
       worker->nodes[n_idx].position[0] = (float)x;
       worker->nodes[n_idx].position[1] = (float)y;
-      worker->nodes[n_idx].f = INT32_MAX;
-      worker->nodes[n_idx].g = INT32_MAX;
+      worker->nodes[n_idx].f = 0.0;
+      worker->nodes[n_idx].g = INFINITY;
       worker->nodes[n_idx].next = NULL;
     }
   }
 
   worker->open_set.size = 0;
+  worker->open_set_count = 0;
 
   memset(worker->open_set.data, 0, 256 * 256 * sizeof(unsigned));
-  memset(worker->closed_set, 0, 256 * 256 * sizeof(unsigned));
+  memset(worker->state_set, 0, 256 * 256 * sizeof(unsigned));
   memset(worker->open_set_bool, 0, 256 * 256 * sizeof(unsigned));
 
   cpu_agent_t *agent = &worker->game->cpu_agents[entity];
@@ -168,31 +176,25 @@ void G_PathFinding(worker_t *worker, unsigned entity) {
       [1] = agent->target[1],
   };
   struct Transform *transform = &worker->game->transforms[entity];
-  float initial_distance = G_Distance(transform->position, target);
 
-  float d_s = G_Distance(transform->position, target);
-  unsigned idx =
-      (int)transform->position[0] + (int)transform->position[1] * 256;
+  unsigned iteration = 0;
 
-  worker->nodes[idx].f = d_s;
-  worker->nodes[idx].h = G_HeuristicWeight * d_s;
-  worker->nodes[idx].g = 0.0f;
+  node_t *start = &worker->nodes[(int)(transform->position[1] * 256 +
+                                       transform->position[0])];
+  start->g = 0.0;
+  start->h = G_Distance(target, transform->position);
+  start->f = start->g + start->h;
 
-  // worker->open_set[0] = &worker->nodes[idx];
-  worker->open_set_count = 1;
-  C_QueueEnqueue(&worker->open_set, &worker->nodes[idx]);
+  C_QueueEnqueue(&worker->open_set, start);
+  worker->state_set[(int)(transform->position[1] * 256 +
+                          transform->position[0])] = NODE_OPENED;
+  worker->open_set_count += 1;
 
-  int iteration = 0;
   while (worker->open_set_count > 0) {
-    iteration++;
-
     node_t *current = C_QueueDequeue(&worker->open_set);
+    worker->open_set_count -= 1;
 
-    worker->open_set_count--;
-
-    worker->closed_set[(int)current->position[1] * 256 +
-                       (int)current->position[0]] = true;
-    worker->closed_set_count++;
+    unsigned current_idx = current->position[1] * 256 + current->position[0];
 
     if (current->position[0] == target[0] &&
         current->position[1] == target[1]) {
@@ -210,78 +212,56 @@ void G_PathFinding(worker_t *worker, unsigned entity) {
         back = back->next;
         p--;
       }
+
       agent->state = AGENT_MOVING;
       return;
     }
 
-    vec2 neighbors[9];
+    worker->state_set[current_idx] = NODE_CLOSED;
 
-    // If the target is very far away, let's only open the neighbor that is in
-    // the direction direction
-    unsigned i = 0;
-    unsigned limit = 8;
-    bool total_exploration = true;
-    if (false) {
-      vec2 d;
-      glm_vec2_sub((float *)target, current->position, d);
-      vec2 s;
-      glm_vec2_sign(d, s);
-      d[0] = glm_min(fabs(d[0]), 1.0) * s[0];
-      d[1] = glm_min(fabs(d[1]), 1.0) * s[1];
+    for (unsigned i = 0; i < 8; i++) {
+      vec2 neighbor;
+      glm_vec2_add(current->position, G_NodeDirections[i], neighbor);
 
-      glm_vec2_add(current->position, d, neighbors[8]);
-      // Check if shorcut is accepted
-      if (G_ValidCell(neighbors[8], d, worker->game->tiles)) {
-        limit = 9;
-        i = 8;
-        total_exploration = false;
-      }
-    }
+      int neighbor_col = neighbor[0];
+      int neighbor_row = neighbor[1];
+      int neighbor_idx = neighbor_row * 256 + neighbor_col;
 
-    if (total_exploration) {
-      glm_vec2_add(current->position, G_NodeDirections[0], neighbors[0]);
-      glm_vec2_add(current->position, G_NodeDirections[1], neighbors[1]);
-      glm_vec2_add(current->position, G_NodeDirections[2], neighbors[2]);
-      glm_vec2_add(current->position, G_NodeDirections[3], neighbors[3]);
-      glm_vec2_add(current->position, G_NodeDirections[4], neighbors[4]);
-      glm_vec2_add(current->position, G_NodeDirections[5], neighbors[5]);
-      glm_vec2_add(current->position, G_NodeDirections[6], neighbors[6]);
-      glm_vec2_add(current->position, G_NodeDirections[7], neighbors[7]);
-    }
-
-    for (; i < limit; i++) {
-      int new_col = (int)neighbors[i][0];
-      int new_row = (int)neighbors[i][1];
-
-      if (!(new_row >= 0 && new_col >= 0 && new_row < 256 && new_col < 256)) {
+      if (!(neighbor_col >= 0 && neighbor_row >= 0 && neighbor_col < 256 &&
+            neighbor_row < 256)) {
         continue;
       }
 
-      unsigned neighbor_idx = new_row * 256 + new_col;
+      if (worker->game->tiles[neighbor_idx].wall) {
+        continue;
+      }
 
-      if (!worker->closed_set[neighbor_idx] &&
-          G_ValidCell(neighbors[i], G_NodeDirections[i], worker->game->tiles)) {
-        float tentative_g = current->g + worker->game->tiles[neighbor_idx].cost;
+      float tentative_g = current->g;
+      if (i >= 4) {
+        tentative_g += sqrtf(2.0f);
+      } else {
+        tentative_g += 1.0;
+      }
 
-        if (tentative_g < worker->nodes[neighbor_idx].g) {
-          float h = G_Distance(neighbors[i], target);
-          h *= h;
+      if (tentative_g < worker->nodes[neighbor_idx].g) {
+        node_t *neighbor_node = &worker->nodes[neighbor_idx];
+        neighbor_node->h = G_Distance(neighbor, target);
+        neighbor_node->g = tentative_g;
+        neighbor_node->f = neighbor_node->g + neighbor_node->h;
+        neighbor_node->next = current;
 
-          worker->nodes[neighbor_idx].g = tentative_g;
-          worker->nodes[neighbor_idx].f = tentative_g + G_HeuristicWeight * h;
-          worker->nodes[neighbor_idx].next = current;
-
-          // worker->open_set[worker->open_set_count] =
-          // &worker->nodes[neighbor_idx];
-          C_QueueEnqueue(&worker->open_set, &worker->nodes[neighbor_idx]);
-          worker->open_set_bool[neighbor_idx] = true;
-          worker->open_set_count++;
-        }
+        // if (worker->state_set[neighbor_idx] != NODE_OPENED) {
+          C_QueueEnqueue(&worker->open_set, neighbor_node);
+          worker->state_set[neighbor_idx] = 2;
+          worker->open_set_count += 1;
+        // } else {
+          // C_QueueSort(&worker->open_set, );
+        // }
       }
     }
   }
 
-  printf("didn't find anything...\n");
+  printf("didn't find anything after %d iterations...\n", iteration);
 }
 
 int main(int argc, char const *argv[]) {
@@ -298,8 +278,8 @@ int main(int argc, char const *argv[]) {
     struct Transform transform = {
         .position =
             {
-                [0] = ((float)(rand() % 8)) + 0.0f + 128.0f,
-                [1] = ((float)(rand() % 8)) + 2.0f + 128.0f,
+                [0] = ((float)(rand() % 8) * 10.0f) + 0.0f + 100.0f,
+                [1] = ((float)(rand() % 8) * 10.0f) + 2.0f + 100.0f,
                 [2] = 0.0f,
                 [3] = 1.0f,
             },
@@ -318,11 +298,11 @@ int main(int argc, char const *argv[]) {
         .target =
             {
 #if CORRIDOR
-              [0] = 55.0f,
-              [1] = 35.0f,
+                [0] = 55.0f,
+                [1] = 35.0f,
 #else
-              [0] = 0.0f,
-              [1] = 0.0f,
+                [0] = 0.0f,
+                [1] = 0.0f,
 #endif
             },
     };
@@ -333,50 +313,59 @@ int main(int argc, char const *argv[]) {
 
   for (unsigned x = 0; x < 256; x++) {
     for (unsigned y = 0; y < 256; y++) {
-      game.tiles[x * 256 + y].cost = 1.0;
+      game.tiles[x * 256 + y].wall = 0;
     }
   }
 
   worker_t worker = {
       .game = &game,
       .nodes = calloc(256 * 256, sizeof(node_t)),
-      .closed_set = calloc(256 * 256, sizeof(unsigned)),
+      .state_set = calloc(256 * 256, sizeof(unsigned)),
       .open_set_bool = calloc(256 * 256, sizeof(unsigned)),
       .open_set_count = 0,
   };
 
-  if (argv[1][0] == 'a') {
-
+  if (CORRIDOR) {
     unsigned room_1_count = 0;
     unsigned *room_1 = malloc(sizeof(unsigned) * 512);
 
     G_Rectangle((ivec2){10, 10}, (ivec2){60, 20}, room_1, &room_1_count);
 
     for (unsigned i = 0; i < room_1_count; i++) {
-      game.tiles[room_1[i]].cost = 999.0f;
+      game.tiles[room_1[i]].wall = 1;
     }
 
-    game.tiles[room_1[9]].cost = 1.2f;
+    game.tiles[room_1[9]].wall = 0;
 
     G_Rectangle((ivec2){10, 20}, (ivec2){60, 30}, room_1, &room_1_count);
 
     for (unsigned i = 0; i < room_1_count; i++) {
-      game.tiles[room_1[i]].cost = 999.0f;
+      game.tiles[room_1[i]].wall = 1;
     }
 
-    game.tiles[room_1[40]].cost = 1.2f;
-  } else if (argv[1][0] == 'r') {
+    game.tiles[room_1[40]].wall = 0;
+
+    G_Rectangle((ivec2){10, 30}, (ivec2){60, 40}, room_1, &room_1_count);
+
+    for (unsigned i = 0; i < room_1_count; i++) {
+      game.tiles[room_1[i]].wall = 1;
+    }
+
+    game.tiles[room_1[9]].wall = 0;
+  } else {
     for (unsigned i = 0; i < 9000; i++) {
       unsigned row = rand() % 256;
       unsigned col = rand() % 256;
 
-      game.tiles[row * 256 + col].cost = 999.0f;
+      if (row != 0 && col != 0) {
+        game.tiles[row * 256 + col].wall = 1;
+      }
     }
   }
 
   C_QueueNew(&worker.open_set, G_CompareNodes, 256 * 256);
 
-  for (unsigned i = 0; i < 3000; i++) {
+  for (unsigned i = 0; i < 100; i++) {
     G_PathFinding(&worker, i);
     // if (i == 0) {
     //   for (unsigned x = 0; x < 256; x++) {
@@ -387,8 +376,6 @@ int main(int argc, char const *argv[]) {
     //   }
     // }
   }
-
-  printf("hello -> %d\n", max_open_set_count);
 
   return 0;
 }

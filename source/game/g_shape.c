@@ -38,7 +38,7 @@ void G_Rectangle(ivec2 start, ivec2 end, unsigned *indices, unsigned *count) {
     (*count)++;
   }
 
-  for (unsigned i = start[1]; i < end[1]; i++) {
+  for (unsigned i = start[1]; i < end[1]+1; i++) {
     ivec2 coord = {
         [0] = end[0],
         [1] = i,
