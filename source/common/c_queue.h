@@ -2,10 +2,10 @@
 
 #include <stdlib.h>
 
-typedef int queue_comp_t(const void *a, const void *b);
+typedef float queue_comp_t(const void *a, const void *b);
 
 typedef struct queue_t {
-  int (*comp)(const void *a, const void *b);
+  float (*comp)(const void *a, const void *b);
 
   size_t capacity;
   size_t size;

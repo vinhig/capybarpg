@@ -17,7 +17,10 @@
 
 #define CORRIDOR 1
 
-vec2 G_NodeDirections[8] = {
+const float G_Horizontal = 1.0f;
+const float G_Diagonal = 1.414213562f;
+
+const vec2 G_NodeDirections[8] = {
     [0] = {1, 0}, [1] = {0, 1},  [2] = {0, -1},  [3] = {-1, 0},
     [4] = {1, 1}, [5] = {-1, 1}, [6] = {-1, -1}, [7] = {1, -1},
 };
@@ -47,10 +50,10 @@ typedef struct cpu_agent_t {
 typedef struct node_t node_t;
 
 struct node_t {
+  float f;
   vec2 position;
   float g;
   float h;
-  float f;
 
   node_t *next;
 } __attribute__((aligned(16)));
@@ -108,9 +111,9 @@ float G_Distance(const vec2 a, const vec2 b) {
   float dx = fabsf(a[0] - b[0]);
   float dy = fabsf(a[1] - b[1]);
 
-  float D1 = 1.0;         // Cost of moving horizontally
-  float D2 = sqrtf(2.0f); // Cost of moving diagonally
-  
+  float D1 = 1.0;        // Cost of moving horizontally
+  float D2 = G_Diagonal; // Cost of moving diagonally
+
   return D1 * (dx + dy) + (D2 - 2 * D1) * fminf(dx, dy);
 }
 
@@ -222,7 +225,7 @@ static bool G_ValidCell(const vec2 position, const vec2 d,
   return true;
 }
 
-int G_CompareNodes(const void *a, const void *b) {
+float G_CompareNodes(const void *a, const void *b) {
   return ((node_t *)b)->f - ((node_t *)a)->f;
 }
 
@@ -232,6 +235,7 @@ void G_PathFinding(worker_t *worker, unsigned entity) {
       unsigned n_idx = x + y * 256;
       worker->nodes[n_idx].position[0] = (float)x;
       worker->nodes[n_idx].position[1] = (float)y;
+      worker->nodes[n_idx].h = 0.0f;
       worker->nodes[n_idx].f = 0.0;
       worker->nodes[n_idx].g = INFINITY;
       worker->nodes[n_idx].next = NULL;
@@ -313,24 +317,26 @@ void G_PathFinding(worker_t *worker, unsigned entity) {
 
       float tentative_g = current->g;
       if (i >= 4) {
-        tentative_g += sqrtf(2.0f);
+        tentative_g += G_Diagonal;
       } else {
         tentative_g += 1.0;
       }
 
       if (tentative_g < worker->nodes[neighbor_idx].g) {
         node_t *neighbor_node = &worker->nodes[neighbor_idx];
-        neighbor_node->h = G_Distance(neighbor, target);
+        if (neighbor_node->h == 0.0f) {
+          neighbor_node->h = G_Distance(neighbor, target);
+        }
         neighbor_node->g = tentative_g;
         neighbor_node->f = neighbor_node->g + neighbor_node->h;
         neighbor_node->next = current;
 
         // if (worker->state_set[neighbor_idx] != NODE_OPENED) {
-          C_QueueEnqueue(&worker->open_set, neighbor_node);
-          worker->state_set[neighbor_idx] = 2;
-          worker->open_set_count += 1;
+        C_QueueEnqueue(&worker->open_set, neighbor_node);
+        worker->state_set[neighbor_idx] = 2;
+        worker->open_set_count += 1;
         // } else {
-          // C_QueueSort(&worker->open_set, );
+        // C_QueueSort(&worker->open_set, );
         // }
       }
     }

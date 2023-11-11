@@ -181,7 +181,7 @@ glm_vec2_norm(vec2 vec) {
  */
 CGLM_INLINE
 void
-glm_vec2_add(vec2 a, vec2 b, vec2 dest) {
+glm_vec2_add(const vec2 a, const vec2 b, vec2 dest) {
   dest[0] = a[0] + b[0];
   dest[1] = a[1] + b[1];
 }
