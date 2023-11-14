@@ -61,20 +61,6 @@ shaders = declare_dependency(
   sources: shader_targets
 )
 
-queue = executable('queue', 'benchmark/fast_queue.c', 'source/common/c_queue.c',)
-
-a_star = executable('a_star',
-  'benchmark/fast_a_star.c',
-  'source/common/c_queue.c',
-  'source/game/g_shape.c',
-  include_directories: [include_directories('source/'), include_directories('external/')],
-  dependencies: [m],
-  link_args: '-ffast-math', 
-  c_args: '-ffast-math', 
-  # link_args: '-pg',
-  # c_args: '-pg'
-)
-
 exe = executable('maidenless',
   'source/maidenless.c',
 
@@ -82,8 +68,6 @@ exe = executable('maidenless',
 
   'source/game/g_game.c',
   'source/game/g_shape.c',
-
-  'source/common/c_queue.c',
 
   'source/vk/vk.c',
   # 'source/vk/vk_shading.c',
@@ -94,6 +78,10 @@ exe = executable('maidenless',
   'external/cgltf.c',
   'external/vk_mem_alloc.cpp',
   'external/stbi_image.c',
+
+  'external/jps.c',
+  'external/heap.c',
+  'external/intlist.c',
 
   install : true,
   include_directories: [include_directories('source/'), include_directories('external/')],
