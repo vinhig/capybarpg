@@ -61,6 +61,14 @@ shaders = declare_dependency(
   sources: shader_targets
 )
 
+jps = executable('a_star',
+  'benchmark/jps.c',
+  'external/jps.c',
+  'external/heap.c',
+  'external/intlist.c',
+  include_directories: [include_directories('external/')]
+)
+
 exe = executable('maidenless',
   'source/maidenless.c',
 

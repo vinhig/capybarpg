@@ -16,7 +16,7 @@
 #include <intlist.h>
 #include <jps.h>
 
-#define CORRIDOR 1
+#define CORRIDOR 0
 
 typedef struct cpu_path_t {
   vec2 *points;
@@ -204,7 +204,7 @@ bool G_Load(client_t *client, game_t *game) {
   textures[12] = G_LoadSingleTexture("../base/dirt.png");
   textures[13] = G_LoadSingleTexture("../base/Wall_single.png");
 
-  for (unsigned i = 0; i < 300; i++) {
+  for (unsigned i = 0; i < 3000; i++) {
     unsigned texture = 0;
 
     struct Sprite sprite = {
