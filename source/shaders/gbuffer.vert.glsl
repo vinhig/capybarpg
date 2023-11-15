@@ -45,10 +45,9 @@ void main() {
   uint instance = visibles[gl_InstanceIndex];
 
   if (draw_state == 0) {
+    // This is drawing a map TILE
     int instance_x = int(gl_InstanceIndex % global_ubo.map_width);
     int instance_y = int(gl_InstanceIndex / global_ubo.map_width);
-    // instance_x -= int(global_ubo.map_width) / 2;
-    // instance_y -= int(global_ubo.map_height) / 2;
     gl_Position = global_ubo.view_proj * vec4(square_pos[gl_VertexIndex] +
                                                   vec2(instance_x, instance_y),
                                               0.0, 1.0);
@@ -58,21 +57,28 @@ void main() {
     o_albedo_importance = vec4(1.0, 0.0, 0.0, 0.0);
 
   } else if (draw_state == 1) {
+    // This is drawing a PAWN
+    float flip = 1.0;
+
+    if (agents[instance].direction.x != 0) {
+      o_albedo_id = uvec4(sprites[instance].texture_east, 0, 0, 0);
+      flip = agents[instance].direction.x;
+    } else if (agents[instance].direction.y < 0.0) {
+      o_albedo_id = uvec4(sprites[instance].texture_north, 0, 0, 0);
+    } else {
+      o_albedo_id = uvec4(sprites[instance].texture_south, 0, 0, 0);
+    }
+
     float z = float(gl_InstanceIndex + 1) / (global_ubo.entity_count + 1);
 
-    // z = 0.01 + ((1.0 - 0.01) / (global_ubo.max_depth - global_ubo.min_depth))
-    // *
-    //                (z - global_ubo.min_depth);
-
     gl_Position = global_ubo.view_proj * model_transforms[instance].model *
-                  vec4(square_pos[gl_VertexIndex], 0.03, 1.0);
+                  vec4(square_pos[gl_VertexIndex] * vec2(flip, 1.0), 0.03, 1.0);
 
     gl_Position.z = 1.0 - z;
 
     o_color = vec3(square_uv[gl_VertexIndex], 1.0);
     vtx_uv = square_uv[gl_VertexIndex];
 
-    o_albedo_id = uvec4(sprites[instance].current, 0, 0, 0);
     o_albedo_importance = vec4(1.0, 0.0, 0.0, 0.0);
   }
 }

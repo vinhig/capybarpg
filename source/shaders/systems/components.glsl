@@ -21,9 +21,6 @@ struct Sprite {
   uint texture_east;
   uint texture_north;
   uint texture_south;
-
-  uint current;
-  float y_flip;
 };
 
 #define sprite_signature 1 << 2
@@ -32,7 +29,8 @@ struct Agent {
   // target.xy => target tile
   // target.w => currently path_finding
   vec2 direction;
-  bool moving;
+  vec2 paddddddding;
+  // bool moving;
 };
 
 #define agent_signature 1 << 3

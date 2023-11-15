@@ -16,7 +16,7 @@
 #include <intlist.h>
 #include <jps.h>
 
-#define CORRIDOR 0
+#define CORRIDOR 1
 
 typedef struct cpu_path_t {
   vec2 *points;
@@ -130,20 +130,29 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
     } else if (game->cpu_agents[i].state == AGENT_MOVING) {
       unsigned c = game->cpu_agents[i].computed_path.current;
       if (c < game->cpu_agents[i].computed_path.count) {
+        // Compute the direction to take
         vec2 next_pos;
         glm_vec2(game->cpu_agents[i].computed_path.points[c], next_pos);
         vec2 d;
         glm_vec2_sub(next_pos, game->transforms[i].position, d);
         vec2 s;
         glm_vec2_sign(d, s);
-        d[0] = glm_min(fabs(d[0]), 0.5f) * s[0];
-        d[1] = glm_min(fabs(d[1]), 0.5f) * s[1];
+        d[0] = glm_min(fabs(d[0]), game->cpu_agents[i].speed) * s[0];
+        d[1] = glm_min(fabs(d[1]), game->cpu_agents[i].speed) * s[1];
 
+        // Reflect the direction on the related GPU agent
+        // Visual and Animation is supposed to change
+        game->gpu_agents[i].direction[0] = 1.0f * s[0];
+        game->gpu_agents[i].direction[1] = 1.0f * s[1];
+
+        // Apply the movement
         glm_vec2_add(game->transforms[i].position, d,
                      game->transforms[i].position);
         if (game->transforms[i].position[0] == next_pos[0] &&
             game->transforms[i].position[1] == next_pos[1]) {
           game->cpu_agents[i].computed_path.current++;
+          game->gpu_agents[i].direction[0] = 0.0f;
+          game->gpu_agents[i].direction[1] = 0.0f;
         }
       } else {
         game->cpu_agents[i].state = AGENT_NOTHING;
@@ -204,11 +213,10 @@ bool G_Load(client_t *client, game_t *game) {
   textures[12] = G_LoadSingleTexture("../base/dirt.png");
   textures[13] = G_LoadSingleTexture("../base/Wall_single.png");
 
-  for (unsigned i = 0; i < 3000; i++) {
+  for (unsigned i = 0; i < 10; i++) {
     unsigned texture = 0;
 
     struct Sprite sprite = {
-        .current = texture,
         .texture_east = texture,
         .texture_north = texture + 1,
         .texture_south = texture + 2,
@@ -238,8 +246,8 @@ bool G_Load(client_t *client, game_t *game) {
     struct Transform transform = {
         .position =
             {
-                [0] = ((float)(rand() % 8) * 1.0f) + 0.0f + 40.0f,
-                [1] = ((float)(rand() % 8) * 1.0f) + 2.0f + 40.0f,
+                [0] = ((float)(rand() % 8) * 8.0f) + 0.0f + 60.0f,
+                [1] = ((float)(rand() % 8) * 8.0f) + 2.0f + 60.0f,
                 [2] = 0.0f,
                 [3] = 1.0f,
             },
@@ -356,12 +364,11 @@ void G_AddPawn(client_t *client, game_t *game, struct Transform *transform,
               [0] = 0.0f,
               [1] = 0.0f,
           },
-      .moving = false,
   };
 
   cpu_agent_t cpu_agent = {
       .state = AGENT_PATH_FINDING,
-      .speed = 1.0,
+      .speed = 0.2,
       .target =
           {
 #if CORRIDOR

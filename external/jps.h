@@ -25,7 +25,7 @@ struct map {
   /*
       [map] | [close_set] | [path]
   */
-  char m[0];
+  char m[1];
 };
 
 struct map *jps_create(int w, int h);
