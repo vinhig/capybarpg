@@ -377,7 +377,7 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
         printf("skipping because no format\n");
         continue;
       } else {
-        VkFormat desired_format = VK_FORMAT_B8G8R8A8_UNORM;
+        VkFormat desired_format = VK_FORMAT_B8G8R8A8_SRGB;
         VkColorSpaceKHR desired_color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
 
         bool found = false;
@@ -553,7 +553,7 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
         .surface = rend->surface,
         .minImageCount = 3,
-        .imageFormat = VK_FORMAT_B8G8R8A8_UNORM,
+        .imageFormat = VK_FORMAT_B8G8R8A8_SRGB,
         .imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
         .imageExtent = image_extent,
         .imageArrayLayers = 1,
@@ -569,7 +569,7 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
     VK_CHECK_R(vkCreateSwapchainKHR(rend->device, &swapchain_info, NULL,
                                     &rend->swapchain));
 
-    rend->swapchain_format = VK_FORMAT_B8G8R8A8_UNORM;
+    rend->swapchain_format = VK_FORMAT_B8G8R8A8_SRGB;
 
     unsigned image_count = 0;
     vkGetSwapchainImagesKHR(rend->device, rend->swapchain, &image_count, NULL);
@@ -595,7 +595,7 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
     VkImageViewCreateInfo image_view_info = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .viewType = VK_IMAGE_VIEW_TYPE_2D,
-        .format = VK_FORMAT_B8G8R8A8_UNORM,
+        .format = VK_FORMAT_B8G8R8A8_SRGB,
         .components =
             {
                 .r = VK_COMPONENT_SWIZZLE_IDENTITY,
@@ -676,6 +676,8 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
         .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
         .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
         .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+        // .anisotropyEnable = VK_TRUE,
+        // .maxAnisotropy = 16,
     };
 
     vkCreateSampler(rend->device, &nearest_sampler_info, NULL,
@@ -683,8 +685,8 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
 
     nearest_sampler_info.magFilter = VK_FILTER_LINEAR;
     nearest_sampler_info.minFilter = VK_FILTER_LINEAR;
-    // nearest_sampler_info.anisotropyEnable = VK_TRUE;
-    // nearest_sampler_info.maxAnisotropy = 16;
+    nearest_sampler_info.anisotropyEnable = VK_TRUE;
+    nearest_sampler_info.maxAnisotropy = 16;
 
     vkCreateSampler(rend->device, &nearest_sampler_info, NULL,
                     &rend->linear_sampler);
@@ -692,6 +694,7 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
     nearest_sampler_info.anisotropyEnable = VK_TRUE,
     nearest_sampler_info.magFilter = VK_FILTER_LINEAR;
     nearest_sampler_info.minFilter = VK_FILTER_LINEAR;
+    nearest_sampler_info.anisotropyEnable = VK_TRUE;
     nearest_sampler_info.maxAnisotropy = 16;
 
     vkCreateSampler(rend->device, &nearest_sampler_info, NULL,
@@ -821,7 +824,7 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
 
   // Create the descriptor set holding all freaking textures
   {
-    unsigned max_bindless_resources = 16;
+    unsigned max_bindless_resources = 256;
     // Create bindless descriptor pool
     VkDescriptorPoolSize pool_sizes_bindless[] = {
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, max_bindless_resources},
@@ -1431,3 +1434,5 @@ void *VK_GetAgents(vk_rend_t *rend) { return rend->ecs->agents; }
 void *VK_GetTransforms(vk_rend_t *rend) { return rend->ecs->transforms; }
 
 void *VK_GetMap(vk_rend_t *rend) { return rend->ecs->map; }
+
+void *VK_GetEntities(vk_rend_t *rend) { return rend->ecs->entities; }

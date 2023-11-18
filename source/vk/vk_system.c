@@ -256,6 +256,33 @@ bool VK_InitECS(vk_rend_t *rend, unsigned count) {
         .pObjectName = "Agents Buffer",
     };
     rend->vkSetDebugUtilsObjectName(rend->device, &a_buffer_name);
+
+    VkBufferCreateInfo immovable_buffer = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = sizeof(struct Sprite) * count,
+        .pQueueFamilyIndices = &rend->queue_family_graphics_index,
+        .queueFamilyIndexCount = 1,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                 VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                 VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    };
+
+    VmaAllocationCreateInfo immovable_allocation = {
+        .usage = VMA_MEMORY_USAGE_AUTO,
+        .requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+    };
+
+    vmaCreateBuffer(rend->allocator, &immovable_buffer, &immovable_allocation,
+                    &rend->ecs->i_buffer, &rend->ecs->i_alloc, NULL);
+
+    VkDebugUtilsObjectNameInfoEXT i_buffer_name = {
+        .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+        .objectType = VK_OBJECT_TYPE_BUFFER,
+        .objectHandle = (uint64_t)rend->ecs->i_buffer,
+        .pObjectName = "Immovables Buffer",
+    };
+    rend->vkSetDebugUtilsObjectName(rend->device, &i_buffer_name);
   }
 
   // Create the "instance" buffer, contains depth-ordered entity that should be
@@ -449,6 +476,37 @@ bool VK_InitECS(vk_rend_t *rend, unsigned count) {
         .pObjectName = "Agents Tmp Buffer",
     };
     rend->vkSetDebugUtilsObjectName(rend->device, &a_tmp_buffer_name);
+
+    VkBufferCreateInfo immovable_tmp_buffer = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = sizeof(struct Immovable) * count,
+        .pQueueFamilyIndices = &rend->queue_family_graphics_index,
+        .queueFamilyIndexCount = 1,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    };
+
+    VmaAllocationCreateInfo immovable_tmp_allocation = {
+        .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                 VMA_ALLOCATION_CREATE_MAPPED_BIT,
+        .usage = VMA_MEMORY_USAGE_AUTO,
+        .requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+    };
+
+    VmaAllocationInfo immovable_alloc_info;
+
+    vmaCreateBuffer(rend->allocator, &immovable_tmp_buffer,
+                    &immovable_tmp_allocation, &rend->ecs->i_tmp_buffer,
+                    &rend->ecs->i_tmp_alloc, &immovable_alloc_info);
+    rend->ecs->immovables = immovable_alloc_info.pMappedData;
+
+    VkDebugUtilsObjectNameInfoEXT i_tmp_buffer_name = {
+        .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+        .objectType = VK_OBJECT_TYPE_BUFFER,
+        .objectHandle = (uint64_t)rend->ecs->i_tmp_buffer,
+        .pObjectName = "Immovables Tmp Buffer",
+    };
+    rend->vkSetDebugUtilsObjectName(rend->device, &i_tmp_buffer_name);
   }
 
   // Create the ECS pipeline layout with the related descriptor set/layout
@@ -495,13 +553,21 @@ bool VK_InitECS(vk_rend_t *rend, unsigned count) {
         .descriptorCount = 1,
     };
 
+    VkDescriptorSetLayoutBinding immovables = {
+        .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT,
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .binding = 6,
+        .descriptorCount = 1,
+    };
+
     VkDescriptorSetLayoutBinding bindings[] = {
-        map, entities, transforms, model_transforms, sprites, agents,
+        map,     entities, transforms, model_transforms,
+        sprites, agents,   immovables,
     };
 
     VkDescriptorSetLayoutCreateInfo layout_info = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = 6,
+        .bindingCount = sizeof(bindings) / sizeof(VkDescriptorSetLayoutBinding),
         .pBindings = &bindings[0],
     };
 
@@ -559,7 +625,13 @@ bool VK_InitECS(vk_rend_t *rend, unsigned count) {
         .range = VK_WHOLE_SIZE,
     };
 
-    VkWriteDescriptorSet writes[6] = {
+    VkDescriptorBufferInfo comp_immovable_buffer = {
+        .buffer = rend->ecs->i_buffer,
+        .offset = 0,
+        .range = VK_WHOLE_SIZE,
+    };
+
+    VkWriteDescriptorSet writes[7] = {
         [0] =
             {
                 .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -620,9 +692,20 @@ bool VK_InitECS(vk_rend_t *rend, unsigned count) {
                 .descriptorCount = 1,
                 .pBufferInfo = &comp_agent_buffer,
             },
+
+        [6] =
+            {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = rend->ecs->ecs_set,
+                .dstBinding = 6,
+                .dstArrayElement = 0,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .descriptorCount = 1,
+                .pBufferInfo = &comp_immovable_buffer,
+            },
     };
 
-    vkUpdateDescriptorSets(rend->device, 6, &writes[0], 0, NULL);
+    vkUpdateDescriptorSets(rend->device, 7, &writes[0], 0, NULL);
 
     VkDescriptorSetLayout layouts[] = {rend->global_ubo_desc_set_layout,
                                        rend->ecs->ecs_layout};
@@ -1018,6 +1101,17 @@ void VK_Add_Sprite(vk_rend_t *rend, unsigned entity, struct Sprite *sprite) {
   ((struct Sprite *)rend->ecs->sprites)[entity] = *sprite;
 
   VK_AddWriteECS(rend, rend->ecs->s_tmp_buffer, rend->ecs->s_buffer, offset,
+                 size);
+}
+
+void VK_Add_Immovable(vk_rend_t *rend, unsigned entity,
+                      struct Immovable *immovable) {
+  size_t size = sizeof(struct Immovable);
+  size_t offset = entity * sizeof(struct Immovable);
+
+  ((struct Immovable *)rend->ecs->immovables)[entity] = *immovable;
+
+  VK_AddWriteECS(rend, rend->ecs->i_tmp_buffer, rend->ecs->i_buffer, offset,
                  size);
 }
 

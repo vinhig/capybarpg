@@ -21,6 +21,8 @@ struct Sprite {
   uint texture_east;
   uint texture_north;
   uint texture_south;
+
+  uint current;
 };
 
 #define sprite_signature 1 << 2
@@ -35,6 +37,15 @@ struct Agent {
 
 #define agent_signature 1 << 3
 
+struct Immovable {
+  // Number of tiles occupied (rotation must be applied)
+  // The transform's position will be anchored at the top-left tile
+  vec2 size;
+  vec2 paddddddding;
+};
+
+#define immovable_signature 1 << 4
+
 struct Tile {
   uint wall;
   uint texture;
@@ -46,7 +57,7 @@ struct Tile {
 #ifndef is_C
 layout(std430, set = SET, binding = 0) buffer Map { Tile tiles[256][256]; };
 
-layout(std140, set = SET, binding = 1) buffer Entities { uint entities[]; };
+layout(std430, set = SET, binding = 1) buffer Entities { uint entities[]; };
 
 layout(std140, set = SET, binding = 2) buffer Transforms {
   Transform transforms[];
@@ -59,4 +70,8 @@ layout(std140, set = SET, binding = 3) buffer ModelTransforms {
 layout(std430, set = SET, binding = 4) buffer Sprites { Sprite sprites[]; };
 
 layout(std140, set = SET, binding = 5) buffer Agents { Agent agents[]; };
+
+layout(std140, set = SET, binding = 6) buffer Immovables {
+  Immovable immovables[];
+};
 #endif

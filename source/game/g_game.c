@@ -54,6 +54,7 @@ struct game_t {
   struct Transform *transforms;
   struct Tile *gpu_tiles;
   unsigned entity_count;
+  unsigned *entities;
 
   worker_t workers[8];
 };
@@ -85,6 +86,69 @@ void G_DestroyGame(game_t *game) {
   free(game);
 }
 
+void G_UpdateAgents(game_t *game, unsigned i) {
+  if (game->cpu_agents[i].state == AGENT_PATH_FINDING) {
+    // G_PathFinding(&game->workers[0], i);
+    jps_set_start(game->map, game->transforms[i].position[0],
+                  game->transforms[i].position[1]);
+    jps_set_end(game->map, game->cpu_agents[i].target[0],
+                game->cpu_agents[i].target[1]);
+
+    IntList *list = il_create(2);
+    jps_path_finding(game->map, 2, list);
+
+    unsigned size = il_size(list);
+
+    game->cpu_agents[i].computed_path.count = size;
+    game->cpu_agents[i].computed_path.current = 0;
+    game->cpu_agents[i].computed_path.points = calloc(size, sizeof(vec2));
+    for (unsigned p = 0; p < size; p++) {
+      int x = il_get(list, (size - p - 1), 0);
+      int y = il_get(list, (size - p - 1), 1);
+      game->cpu_agents[i].computed_path.points[p][0] = x;
+      game->cpu_agents[i].computed_path.points[p][1] = y;
+    }
+
+    game->cpu_agents[i].state = AGENT_MOVING;
+  } else if (game->cpu_agents[i].state == AGENT_MOVING) {
+    unsigned c = game->cpu_agents[i].computed_path.current;
+    if (c < game->cpu_agents[i].computed_path.count) {
+      // Compute the direction to take
+      vec2 next_pos;
+      glm_vec2(game->cpu_agents[i].computed_path.points[c], next_pos);
+      vec2 d;
+      glm_vec2_sub(next_pos, game->transforms[i].position, d);
+      vec2 s;
+      glm_vec2_sign(d, s);
+      d[0] = glm_min(fabs(d[0]), game->cpu_agents[i].speed) * s[0];
+      d[1] = glm_min(fabs(d[1]), game->cpu_agents[i].speed) * s[1];
+
+      // Reflect the direction on the related GPU agent
+      // Visual and Animation is supposed to change
+      vec2 supposed_d = {
+          1.0f * s[0],
+          1.0f * s[1],
+      };
+      if (supposed_d[0] != 0.0f || supposed_d[1] != 0.0f) {
+        game->gpu_agents[i].direction[0] = supposed_d[0];
+        game->gpu_agents[i].direction[1] = supposed_d[1];
+      }
+
+      // Apply the movement
+      glm_vec2_add(game->transforms[i].position, d,
+                   game->transforms[i].position);
+      if (game->transforms[i].position[0] == next_pos[0] &&
+          game->transforms[i].position[1] == next_pos[1]) {
+        game->cpu_agents[i].computed_path.current++;
+      }
+    } else {
+      game->cpu_agents[i].state = AGENT_NOTHING;
+      game->gpu_agents[i].direction[0] = 0.0f;
+      game->gpu_agents[i].direction[1] = 0.0f;
+    }
+  }
+}
+
 game_state_t G_TickGame(client_t *client, game_t *game) {
   game_state_t state;
   unsigned w, h;
@@ -93,9 +157,9 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
   float ratio = (float)w / (float)h;
 
   glm_mat4_identity(state.fps.view);
-  float zoom = 0.03f;
-  float offset_x = 45.0f;
-  float offset_y = 32.0f;
+  float zoom = 0.05f;
+  float offset_x = 85.0f / 3.0f;
+  float offset_y = 85.0f / 3.0f;
   glm_ortho(-1.0 * ratio / zoom + offset_x, 1.0 * ratio / zoom + offset_x,
             -1.0f / zoom + offset_y, 1.0f / zoom + offset_y, 0.01, 50.0,
             (vec4 *)&state.fps.view_proj);
@@ -104,59 +168,10 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
   clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 
   for (unsigned i = 0; i < game->entity_count; i++) {
-    if (game->cpu_agents[i].state == AGENT_PATH_FINDING) {
-      // G_PathFinding(&game->workers[0], i);
-      jps_set_start(game->map, game->transforms[i].position[0],
-                    game->transforms[i].position[1]);
-      jps_set_end(game->map, game->cpu_agents[i].target[0],
-                  game->cpu_agents[i].target[1]);
+    unsigned signature = game->entities[i];
 
-      IntList *list = il_create(2);
-      jps_path_finding(game->map, 2, list);
-
-      unsigned size = il_size(list);
-
-      game->cpu_agents[i].computed_path.count = size;
-      game->cpu_agents[i].computed_path.current = 0;
-      game->cpu_agents[i].computed_path.points = calloc(size, sizeof(vec2));
-      for (unsigned p = 0; p < size; p++) {
-        int x = il_get(list, (size - p - 1), 0);
-        int y = il_get(list, (size - p - 1), 1);
-        game->cpu_agents[i].computed_path.points[p][0] = x;
-        game->cpu_agents[i].computed_path.points[p][1] = y;
-      }
-
-      game->cpu_agents[i].state = AGENT_MOVING;
-    } else if (game->cpu_agents[i].state == AGENT_MOVING) {
-      unsigned c = game->cpu_agents[i].computed_path.current;
-      if (c < game->cpu_agents[i].computed_path.count) {
-        // Compute the direction to take
-        vec2 next_pos;
-        glm_vec2(game->cpu_agents[i].computed_path.points[c], next_pos);
-        vec2 d;
-        glm_vec2_sub(next_pos, game->transforms[i].position, d);
-        vec2 s;
-        glm_vec2_sign(d, s);
-        d[0] = glm_min(fabs(d[0]), game->cpu_agents[i].speed) * s[0];
-        d[1] = glm_min(fabs(d[1]), game->cpu_agents[i].speed) * s[1];
-
-        // Reflect the direction on the related GPU agent
-        // Visual and Animation is supposed to change
-        game->gpu_agents[i].direction[0] = 1.0f * s[0];
-        game->gpu_agents[i].direction[1] = 1.0f * s[1];
-
-        // Apply the movement
-        glm_vec2_add(game->transforms[i].position, d,
-                     game->transforms[i].position);
-        if (game->transforms[i].position[0] == next_pos[0] &&
-            game->transforms[i].position[1] == next_pos[1]) {
-          game->cpu_agents[i].computed_path.current++;
-          game->gpu_agents[i].direction[0] = 0.0f;
-          game->gpu_agents[i].direction[1] = 0.0f;
-        }
-      } else {
-        game->cpu_agents[i].state = AGENT_NOTHING;
-      }
+    if (signature & agent_signature) {
+      G_UpdateAgents(game, i);
     }
   }
 
@@ -192,7 +207,8 @@ bool G_Load(client_t *client, game_t *game) {
   game->cpu_agents = calloc(3000, sizeof(cpu_agent_t));
   time_t seed = time(NULL);
   srand(seed);
-  texture_t *textures = malloc(sizeof(texture_t) * 14);
+  unsigned texture_count = 33;
+  texture_t *textures = malloc(sizeof(texture_t) * texture_count);
   // Just load the hardcoded animals atm
   textures[0] = G_LoadSingleTexture("../base/Bison_east.png");
   textures[1] = G_LoadSingleTexture("../base/Bison_north.png");
@@ -211,7 +227,18 @@ bool G_Load(client_t *client, game_t *game) {
   textures[11] = G_LoadSingleTexture("../base/DuckMale_south.png");
 
   textures[12] = G_LoadSingleTexture("../base/dirt.png");
-  textures[13] = G_LoadSingleTexture("../base/Wall_single.png");
+  textures[13] = G_LoadSingleTexture("../base/walls/Brick_Wall_01.png");
+
+  textures[14] = G_LoadSingleTexture("../base/furnitures/bed_east.png");
+  textures[15] = G_LoadSingleTexture("../base/furnitures/bed_north.png");
+  textures[16] = G_LoadSingleTexture("../base/furnitures/bed_south.png");
+
+  for (unsigned t = 0; t < 16; t++) {
+    char name[256];
+    sprintf(name, "../base/walls/Brick_Wall_%02d.png", t);
+    printf("loading %s walllll -> %d\n", name, 17 + t);
+    textures[17 + t] = G_LoadSingleTexture(name);
+  }
 
   for (unsigned i = 0; i < 10; i++) {
     unsigned texture = 0;
@@ -262,7 +289,7 @@ bool G_Load(client_t *client, game_t *game) {
     G_AddPawn(client, game, &transform, &sprite);
   }
 
-  VK_UploadTextures(CL_GetRend(client), textures, 14);
+  VK_UploadTextures(CL_GetRend(client), textures, texture_count);
 
   struct Tile tiles[256][256];
 
@@ -325,7 +352,7 @@ bool G_Load(client_t *client, game_t *game) {
     tiles[col][row].wall = 0;
     tiles[col][row].texture = 12;
   } else {
-    for (unsigned i = 0; i < 9000; i++) {
+    for (unsigned i = 0; i < 10000; i++) {
       unsigned row = rand() % 256;
       unsigned col = rand() % 256;
 
@@ -342,12 +369,62 @@ bool G_Load(client_t *client, game_t *game) {
 
   VK_SetMap(CL_GetRend(client), &tiles[0][0], 256, 256);
 
+  struct Immovable bed = {
+      .size = {1.0, 2.0},
+  };
+
+  G_AddFurniture(client, game,
+                 &(struct Transform){
+                     .position = {11.0f, 11.0f, 10.0f, 1.0f},
+                     .rotation = {0.0f, 0.0f, 0.0f},
+                     .scale = {1.0, 1.0, 1.0, 1.0},
+                 },
+                 &(struct Sprite){
+                     .texture_east = 14,
+                     .texture_north = 15,
+                     .texture_south = 16,
+                     .current = 15,
+                 },
+                 &bed);
+
+  bed = (struct Immovable){
+      .size = {2.0, 1.0},
+  };
+  G_AddFurniture(client, game,
+                 &(struct Transform){
+                     .position = {12.0f, 11.0f, 10.0f, 1.0f},
+                     .rotation = {0.0f, 0.0f, 0.0f},
+                     .scale = {1.0, 1.0, 1.0, 1.0},
+                 },
+                 &(struct Sprite){
+                     .texture_east = 14,
+                     .texture_north = 15,
+                     .texture_south = 16,
+                     .current = 14,
+                 },
+                 &bed);
+
   // Get the mapped data from the renderer
   game->gpu_agents = VK_GetAgents(CL_GetRend(client));
   game->transforms = VK_GetTransforms(CL_GetRend(client));
   game->gpu_tiles = VK_GetMap(CL_GetRend(client));
+  game->entities = VK_GetEntities(CL_GetRend(client));
 
   return true;
+}
+
+void G_AddFurniture(client_t *client, game_t *game, struct Transform *transform,
+                    struct Sprite *sprite, struct Immovable *immovable) {
+  game->entity_count += 1;
+  vk_rend_t *rend = CL_GetRend(client);
+  unsigned entity =
+      VK_Add_Entity(rend, transform_signature | model_transform_signature |
+                              sprite_signature | immovable_signature);
+
+  VK_Add_Transform(rend, entity, transform);
+  VK_Add_Model_Transform(rend, entity, NULL);
+  VK_Add_Sprite(rend, entity, sprite);
+  VK_Add_Immovable(rend, entity, immovable);
 }
 
 void G_AddPawn(client_t *client, game_t *game, struct Transform *transform,

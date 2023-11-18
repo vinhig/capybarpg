@@ -12,6 +12,7 @@ struct Transform;
 struct ModelTransform;
 struct Sprite;
 struct Agent;
+struct Immovable;
 
 typedef struct game_state_t {
   // First person camera.
@@ -38,6 +39,12 @@ bool G_LoadCurrentWorld(client_t *client, game_t *game);
 /// Transform, Model Transform, Sprite and Agent components).
 void G_AddPawn(client_t *client, game_t *game, struct Transform *transform,
                struct Sprite *sprite);
+
+/// @brief Helper function to add a Furniture to the world (an entity with a
+/// Transform, Model Transform, and Sprite components). Register it to the list
+/// of usable material if applicable.
+void G_AddFurniture(client_t *client, game_t *game, struct Transform *transform,
+                    struct Sprite *sprite, struct Immovable* immovable);
 
 game_state_t G_TickGame(client_t *client, game_t *game);
 

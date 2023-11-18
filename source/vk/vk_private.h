@@ -69,6 +69,12 @@ typedef struct vk_ecs_t {
   VmaAllocation a_tmp_alloc;
   void *agents;
 
+  VkBuffer i_buffer;
+  VmaAllocation i_alloc;
+  VkBuffer i_tmp_buffer;
+  VmaAllocation i_tmp_alloc;
+  void *immovables;
+
   VkBuffer s_buffer;
   VmaAllocation s_alloc;
   VkBuffer s_tmp_buffer;

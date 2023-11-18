@@ -33,6 +33,8 @@ void VK_Add_Model_Transform(vk_rend_t *rend, unsigned entity,
                             struct ModelTransform *model);
 void VK_Add_Agent(vk_rend_t *rend, unsigned entity, struct Agent *agent);
 void VK_Add_Sprite(vk_rend_t *rend, unsigned entity, struct Sprite *sprite);
+void VK_Add_Immovable(vk_rend_t *rend, unsigned entity,
+                      struct Immovable *immovable);
 
 void VK_SetMap(vk_rend_t *rend, struct Tile *tiles, unsigned map_width,
                unsigned map_height);
@@ -40,3 +42,4 @@ void VK_SetMap(vk_rend_t *rend, struct Tile *tiles, unsigned map_width,
 void *VK_GetAgents(vk_rend_t *rend);
 void *VK_GetTransforms(vk_rend_t *rend);
 void *VK_GetMap(vk_rend_t *rend);
+void *VK_GetEntities(vk_rend_t *rend);

@@ -64,7 +64,17 @@ void main() {
 
   Transform the = transforms[id];
 
+  float scale_size = 1.0;
+  vec2 offset = vec2(0.0);
+  if ((entities[id] & immovable_signature) == immovable_signature) {
+    scale_size = max(immovables[id].size.x, immovables[id].size.y);
+
+    offset = vec2(abs(1 - immovables[id].size.x) / 2.0,
+                  abs(1 - immovables[id].size.y) / 2.0);
+  }
+
   model_transforms[id].model =
-      translate(the.position) * rotate_x(the.rotation.x) *
-      rotate_y(the.rotation.y) * rotate_z(the.rotation.z) * scale(the.scale);
+      translate(the.position + vec4(offset, vec2(0.0))) *
+      rotate_x(the.rotation.x) * rotate_y(the.rotation.y) *
+      rotate_z(the.rotation.z) * scale(the.scale * scale_size);
 }
