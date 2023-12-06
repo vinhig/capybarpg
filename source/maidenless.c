@@ -27,9 +27,8 @@ int main(int argc, char **argv) {
   }
 
   if (strlen(desc.game) == 0) {
-    printf("No game specified. Defaulting to 'Zombie Hierarchy'. Check it on "
-           "Steam!\n");
-    desc.game = "../base_ze";
+    printf("No game specified. Defaulting to 'Example'.\n");
+    desc.game = "../base";
   }
 
   game_t *game = G_CreateGame(client, desc.game);

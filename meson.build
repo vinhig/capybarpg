@@ -69,6 +69,22 @@ jps = executable('a_star',
   include_directories: [include_directories('external/')]
 )
 
+qcvm = static_library('qcvm',
+  'external/qcvm/qcvm_bootstrap.c',
+  'external/qcvm/qcvm_entities.c',
+  'external/qcvm/qcvm_exports.c',
+  'external/qcvm/qcvm_fields.c',
+  'external/qcvm/qcvm_functions.c',
+  'external/qcvm/qcvm_globals.c',
+  'external/qcvm/qcvm_opcodes.c',
+  'external/qcvm/qcvm_opcodes.h',
+  'external/qcvm/qcvm_parameters.c',
+  'external/qcvm/qcvm_return.c',
+  'external/qcvm/qcvm_runtime.c',
+  'external/qclib/qclib.c',
+  include_directories: [include_directories('external/qcvm/'), include_directories('external/qclib/')]
+)
+
 exe = executable('maidenless',
   'source/maidenless.c',
 
@@ -92,5 +108,11 @@ exe = executable('maidenless',
   'external/intlist.c',
 
   install : true,
-  include_directories: [include_directories('source/'), include_directories('external/')],
+  include_directories: [
+    include_directories('source/'),
+    include_directories('external/'),
+    include_directories('external/qcvm/'),
+    include_directories('external/qclib/')
+  ],
+  link_with: [qcvm],
   dependencies: [sdl2, opengl, vulkan, dl, m, shaders])

@@ -20,6 +20,8 @@
         "semaphore": "c",
         "map": "c",
         "format": "c",
-        "functional": "c"
+        "functional": "c",
+        "qclib.h": "c",
+        "qcvm_private.h": "c"
     }
 }

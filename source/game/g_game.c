@@ -15,6 +15,9 @@
 #include <cglm/vec2.h>
 #include <intlist.h>
 #include <jps.h>
+#include <qcvm/qcvm.h>
+//
+#include <qclib/qclib.h>
 
 #define CORRIDOR 1
 
@@ -43,9 +46,35 @@ typedef struct worker_t {
   game_t *game;
 } worker_t;
 
+typedef enum listener_type_t {
+  G_SCENE_START,
+  G_SCENE_END,
+  G_SCENE_UPDATE,
+  G_LISTENER_TYPE_COUNT,
+} listener_type_t;
+
+typedef struct listener_t {
+  int qcvm_func;
+} listener_t;
+
+typedef struct scene_t {
+  const char *name;
+
+  listener_t start_listeners[16];
+  unsigned start_listener_count;
+
+  listener_t update_listeners[16];
+  unsigned update_listener_count;
+
+  listener_t end_listeners[16];
+  unsigned end_listener_count;
+} scene_t;
+
 struct game_t {
   vk_system_t *model_matrix_sys;
   vk_system_t *path_finding_sys;
+
+  qcvm_t *qcvm;
 
   struct map *map;
 
@@ -57,6 +86,12 @@ struct game_t {
   unsigned *entities;
 
   worker_t workers[8];
+
+  char *base;
+
+  scene_t *scenes;
+  unsigned scene_count;
+  unsigned scene_capacity;
 };
 
 game_t *G_CreateGame(client_t *client, char *base) {
@@ -66,6 +101,7 @@ game_t *G_CreateGame(client_t *client, char *base) {
   game->cpu_agents = calloc(3000, sizeof(cpu_agent_t));
 
   game->map = jps_create(256, 256);
+  game->base = base;
 
   game->workers[0] = (worker_t){
       .game = game,
@@ -203,12 +239,218 @@ texture_t G_LoadSingleTexture(const char *path) {
   };
 }
 
+bool G_Add_Recipes(game_t* game, const char* path, bool required) {
+  return false;
+}
+
+void G_Add_Recipes_QC(qcvm_t* qcvm) {};
+
+void G_Load_Game_QC(qcvm_t* qcvm) {}
+
+const char* G_Get_Last_Asset_Loaded(game_t* game) {}
+
+void G_Get_Last_Asset_Loaded_QC(qcvm_t* qcvm) {}
+
+void G_Add_Wall(game_t* game, int x, int y, const char* recipe) {}
+
+void G_Add_Wall_QC(qcvm_t* qcvm) {}
+
+void G_Add_Scene(game_t *game, const char *name) {
+  if (game->scene_capacity == 0) {
+    game->scenes = calloc(16, sizeof(scene_t));
+    game->scene_count = 0;
+    game->scene_capacity = 16;
+  }
+  if (game->scene_count == game->scene_capacity) {
+    game->scenes =
+        realloc(game->scenes, game->scene_capacity * 2 * sizeof(scene_t));
+    game->scene_capacity *= 2;
+  }
+
+  game->scenes[game->scene_count].name =
+      memcpy(malloc(strlen(name) + 1), name, strlen(name) + 1);
+  game->scene_count++;
+}
+
+void G_Add_Scene_QC(qcvm_t *qcvm) {
+  const char *scene_name = qcvm_get_parm_string(qcvm, 0);
+
+  game_t *game = (game_t *)qcvm_get_user_data(qcvm);
+
+  G_Add_Scene(game, scene_name);
+}
+
+scene_t *G_Get_Scene_By_Name(game_t *game, const char *name) {
+  for (unsigned i = 0; i < game->scene_count; i++) {
+    scene_t *the_scene = &game->scenes[i];
+    if (strcmp(name, the_scene->name) == 0) {
+      return the_scene;
+    }
+  }
+
+  return NULL;
+}
+
+void G_Add_Listener(game_t *game, listener_type_t type, const char *attachment,
+                    int func) {
+  switch (type) {
+  case G_SCENE_START: {
+    scene_t *the_scene = G_Get_Scene_By_Name(game, attachment);
+
+    if (the_scene) {
+      if (the_scene->start_listener_count == 16) {
+        printf("[ERROR] Reached max number of `G_SCENE_START` for the scene "
+               "`%s`.\n",
+               attachment);
+
+        return;
+      }
+      the_scene->start_listeners[the_scene->start_listener_count].qcvm_func =
+          func;
+      the_scene->start_listener_count++;
+    } else {
+      printf(
+          "[ERROR] QuakeC code specified a non-existent scene `%s` when trying "
+          "to attach a `G_SCENE_START` listener.\n",
+          attachment);
+    }
+
+    break;
+  }
+  case G_SCENE_END: {
+    scene_t *the_scene = G_Get_Scene_By_Name(game, attachment);
+
+    if (the_scene) {
+      if (the_scene->end_listener_count == 16) {
+        printf("[ERROR] Reached max number of `G_SCENE_END` for the scene "
+               "`%s`.\n",
+               attachment);
+
+        return;
+      }
+      the_scene->end_listeners[the_scene->end_listener_count].qcvm_func = func;
+      the_scene->end_listener_count++;
+    } else {
+      printf(
+          "[ERROR] QuakeC code specified a non-existent scene `%s` when trying "
+          "to attach a `G_SCENE_END` listener.\n",
+          attachment);
+    }
+
+    break;
+  }
+  case G_SCENE_UPDATE: {
+    scene_t *the_scene = G_Get_Scene_By_Name(game, attachment);
+
+    if (the_scene) {
+      if (the_scene->update_listener_count == 16) {
+        printf("[ERROR] Reached max number of `G_SCENE_UPDATE` for the scene "
+               "`%s`.\n",
+               attachment);
+
+        return;
+      }
+      the_scene->update_listeners[the_scene->update_listener_count].qcvm_func =
+          func;
+      the_scene->update_listener_count++;
+    } else {
+      printf(
+          "[ERROR] QuakeC code specified a non-existent scene `%s` when trying "
+          "to attach a `G_SCENE_UPDATE` listener.\n",
+          attachment);
+    }
+
+    break;
+  }
+  default:
+    break;
+  }
+}
+
+void G_Add_Listener_QC(qcvm_t *qcvm) {
+  int listener_type = qcvm_get_parm_int(qcvm, 0);
+  const char *attachment = qcvm_get_parm_string(qcvm, 1);
+  const char *func = qcvm_get_parm_string(qcvm, 2);
+
+  if (listener_type >= G_LISTENER_TYPE_COUNT) {
+    printf("[ERROR] QuakeC code specified an invalid listener type.\n");
+    return;
+  }
+
+  int func_id = qcvm_find_function(qcvm, func);
+  if (func_id < 1) {
+    printf("[ERROR] QuakeC code specified an invalid function for the "
+           "listener callback.\n");
+    return;
+  }
+
+  G_Add_Listener(qcvm_get_user_data(qcvm), listener_type, attachment, func_id);
+}
+
+void G_Run_Scene_QC(qcvm_t *qcvm) {}
+
+void G_Install_QCVM(game_t *game) {
+  qcvm_export_t export_G_Add_Scene = {
+      .func = G_Add_Scene_QC,
+      .name = "G_Add_Scene",
+      .argc = 1,
+      .args[0] = {.name = "s", .type = QCVM_STRING},
+  };
+
+  qcvm_export_t export_G_Add_Listener = {
+      .func = G_Add_Listener_QC,
+      .name = "G_Add_Listener",
+      .argc = 3,
+      .args[0] = {.name = "type", .type = QCVM_INT},
+      .args[1] = {.name = "attachment", .type = QCVM_STRING},
+      .args[2] = {.name = "func", .type = QCVM_STRING},
+  };
+
+  qcvm_export_t export_G_Run_Scene = {
+      .func = G_Run_Scene_QC,
+      .name = "G_Run_Scene",
+      .argc = 1,
+      .args[0] = {.name = "s", .type = QCVM_STRING},
+  };
+
+  qcvm_add_export(game->qcvm, &export_G_Add_Scene);
+  qcvm_add_export(game->qcvm, &export_G_Add_Listener);
+  qcvm_add_export(game->qcvm, &export_G_Run_Scene);
+}
+
 bool G_Load(client_t *client, game_t *game) {
   game->cpu_agents = calloc(3000, sizeof(cpu_agent_t));
   time_t seed = time(NULL);
   srand(seed);
   unsigned texture_count = 33;
   texture_t *textures = malloc(sizeof(texture_t) * texture_count);
+  // Try to fetch the progs.dat of the specified game
+  char progs_dat[256];
+  sprintf(&progs_dat[0], "%s/progs.dat", game->base);
+  printf("trying to load %s\n", progs_dat);
+
+  game->qcvm = qcvm_from_file(progs_dat);
+
+  if (!game->qcvm) {
+    printf("Couldn't load `%s`. Aborting, the game isn't playable.\n",
+           progs_dat);
+    return false;
+  }
+
+  qclib_install(game->qcvm);
+  G_Install_QCVM(game);
+
+  qcvm_set_user_data(game->qcvm, game);
+
+  int main_func = qcvm_find_function(game->qcvm, "main");
+  if (main_func < 1) {
+    printf("oh nooo.\n");
+    return false;
+  } else {
+    printf("main_func = %d\n", main_func);
+  }
+  qcvm_run(game->qcvm, main_func);
+
   // Just load the hardcoded animals atm
   textures[0] = G_LoadSingleTexture("../base/Bison_east.png");
   textures[1] = G_LoadSingleTexture("../base/Bison_north.png");
@@ -236,7 +478,6 @@ bool G_Load(client_t *client, game_t *game) {
   for (unsigned t = 0; t < 16; t++) {
     char name[256];
     sprintf(name, "../base/walls/Brick_Wall_%02d.png", t);
-    printf("loading %s walllll -> %d\n", name, 17 + t);
     textures[17 + t] = G_LoadSingleTexture(name);
   }
 
