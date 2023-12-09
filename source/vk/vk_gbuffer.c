@@ -364,8 +364,6 @@ void VK_DrawGBuffer(vk_rend_t *rend) {
   vk_gbuffer_t *gbuffer = rend->gbuffer;
   VkCommandBuffer cmd = rend->graphics_command_buffer[rend->current_frame % 3];
 
-  VK_Gigabarrier(cmd);
-
   VkRenderingInfo render_info = {
       .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
       .renderArea =
@@ -403,7 +401,8 @@ void VK_DrawGBuffer(vk_rend_t *rend) {
   vkCmdPushConstants(cmd, rend->gbuffer->pipeline_layout,
                      VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(unsigned),
                      &draw_state);
-  vkCmdDraw(cmd, 6, 256 * 256, 0, 0);
+  vkCmdDraw(cmd, 6, rend->global_ubo.map_height * rend->global_ubo.map_width, 0,
+            0);
 
   draw_state = 1; // Pawn
   vkCmdPushConstants(cmd, rend->gbuffer->pipeline_layout,

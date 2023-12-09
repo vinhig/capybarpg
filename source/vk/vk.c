@@ -202,7 +202,7 @@ VkShaderModule VK_LoadShaderModule(vk_rend_t *rend, const char *path) {
   }
 
   fseek(f, 0, SEEK_END);
-  long size = ftell(f);
+  size_t size = ftell(f);
   fseek(f, 0, SEEK_SET);
 
   void *shader = malloc(size);
@@ -904,6 +904,10 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
     VK_PUSH_ERROR("Couldn't create a specific pipeline: GBuffer.");
   }
 
+  if (!VK_InitImmediate(rend)) {
+    VK_PUSH_ERROR("Couldn't create a specific pipeline: Immediate.");
+  }
+
   return rend;
 }
 
@@ -981,8 +985,8 @@ void VK_Draw(vk_rend_t *rend, game_state_t *game) {
 
   rend->global_ubo.view_dim[0] = rend->width;
   rend->global_ubo.view_dim[1] = rend->height;
-  rend->global_ubo.map_width = 256;
-  rend->global_ubo.map_height = 256;
+  rend->global_ubo.map_width = 0;
+  rend->global_ubo.map_height = 0;
   rend->global_ubo.entity_count = rend->ecs->entity_count;
 
   void *data;
@@ -1007,7 +1011,7 @@ void VK_Draw(vk_rend_t *rend, game_state_t *game) {
 
   VK_DrawGBuffer(rend);
 
-  // VK_DrawShading(rend);
+  VK_DrawImmediate(rend, game);
 
   // Before rendering, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR ->
   // VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL.
@@ -1158,8 +1162,6 @@ void VK_DestroyRend(vk_rend_t *rend) {
   // VK_DestroyShading(rend);
   VK_DestroyGBuffer(rend);
   VK_DestroyECS(rend);
-
-  printf("rend->assets.texture_count = %d\n", rend->assets.texture_count);
 
   for (unsigned i = 0; i < rend->assets.texture_count; i++) {
     vmaDestroyBuffer(rend->allocator, rend->assets.textures_staging[i],
@@ -1427,6 +1429,170 @@ void VK_UploadTextures(vk_rend_t *rend, texture_t *textures, unsigned count) {
   vkQueueSubmit(rend->graphics_queue, 1, &submit_info, rend->transfer_fence);
 
   VK_CreateTexturesDescriptor(rend);
+}
+
+void VK_UploadSingleTexture(vk_rend_t *rend, texture_t *texture) {
+  vkWaitForFences(rend->device, 1, &rend->transfer_fence, true, UINT64_MAX);
+
+  vkResetFences(rend->device, 1, &rend->transfer_fence);
+
+  VkCommandBuffer cmd = rend->transfer_command_buffer;
+  VkCommandBufferBeginInfo begin_info = {
+      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+      .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+  };
+
+  vkBeginCommandBuffer(cmd, &begin_info);
+
+  VkImage vk_image;
+  VmaAllocation vk_image_alloc;
+  VkImageView vk_image_view;
+
+  VkBuffer vk_staging;
+  VmaAllocation vk_staging_alloc;
+
+  VkExtent3D extent = {
+      .width = texture->width,
+      .height = texture->height,
+      .depth = 1,
+  };
+  VkImageCreateInfo tex_info = {
+      .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+      .imageType = VK_IMAGE_TYPE_2D,
+      .format = VK_FORMAT_R8G8B8A8_SRGB,
+      .extent = extent,
+      .mipLevels = 1,
+      .arrayLayers = 1,
+      .samples = VK_SAMPLE_COUNT_1_BIT,
+      .tiling = VK_IMAGE_TILING_OPTIMAL,
+      .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+  };
+  VmaAllocationCreateInfo tex_alloc_info = {.usage = VMA_MEMORY_USAGE_GPU_ONLY};
+
+  vmaCreateImage(rend->allocator, &tex_info, &tex_alloc_info, &vk_image,
+                 &vk_image_alloc, NULL);
+
+  // Change layout of this image
+  VkImageSubresourceRange range;
+  range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  range.baseMipLevel = 0;
+  range.levelCount = 1;
+  range.baseArrayLayer = 0;
+  range.layerCount = 1;
+
+  VkImageMemoryBarrier image_barrier_1 = {
+      .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+      .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+      .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      .image = vk_image,
+      .subresourceRange = range,
+      .srcAccessMask = 0,
+      .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+  };
+
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1,
+                       &image_barrier_1);
+
+  // CREATE, MAP
+  VkBufferCreateInfo staging_info = {
+      .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+      .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+      .size = texture->width * texture->height * 4,
+  };
+
+  VmaAllocationCreateInfo staging_alloc_info = {
+      .usage = VMA_MEMORY_USAGE_CPU_TO_GPU,
+  };
+
+  vmaCreateBuffer(rend->allocator, &staging_info, &staging_alloc_info,
+                  &vk_staging, &vk_staging_alloc, NULL);
+
+  void *data;
+  vmaMapMemory(rend->allocator, vk_staging_alloc, &data);
+  memcpy(data, texture->data, texture->width * texture->height * 4);
+  vmaUnmapMemory(rend->allocator, vk_staging_alloc);
+
+  // COPY
+  VkBufferImageCopy copy_region = {
+      .bufferOffset = 0,
+      .bufferRowLength = 0,
+      .bufferImageHeight = 0,
+      .imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+      .imageSubresource.mipLevel = 0,
+      .imageSubresource.baseArrayLayer = 0,
+      .imageSubresource.layerCount = 1,
+      .imageExtent = extent,
+  };
+
+  vkCmdCopyBufferToImage(cmd, vk_staging, vk_image,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
+
+  image_barrier_1.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+  image_barrier_1.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  image_barrier_1.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  image_barrier_1.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, NULL, 0,
+                       NULL, 1, &image_barrier_1);
+
+  // Create image view and sampler
+  // Almost there
+  VkImageViewCreateInfo image_view_info = {
+      .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+      .viewType = VK_IMAGE_VIEW_TYPE_2D,
+      .format = VK_FORMAT_R8G8B8A8_SRGB,
+      .components =
+          {
+              .r = VK_COMPONENT_SWIZZLE_IDENTITY,
+              .g = VK_COMPONENT_SWIZZLE_IDENTITY,
+              .b = VK_COMPONENT_SWIZZLE_IDENTITY,
+              .a = VK_COMPONENT_SWIZZLE_IDENTITY,
+          },
+      .subresourceRange =
+          {
+              .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+              .baseMipLevel = 0,
+              .levelCount = 1,
+              .baseArrayLayer = 0,
+              .layerCount = 1,
+          },
+      .image = vk_image,
+  };
+
+  vkCreateImageView(rend->device, &image_view_info, NULL, &vk_image_view);
+
+  if (texture->label) {
+    VkDebugUtilsObjectNameInfoEXT image_view_name = {
+        .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+        .objectType = VK_OBJECT_TYPE_IMAGE_VIEW,
+        .objectHandle = (uint64_t)vk_image_view,
+        .pObjectName = texture->label,
+    };
+
+    rend->vkSetDebugUtilsObjectName(rend->device, &image_view_name);
+  }
+
+  vkEndCommandBuffer(cmd);
+
+  VkSubmitInfo submit_info = {
+      .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+      .commandBufferCount = 1,
+      .pCommandBuffers = &rend->transfer_command_buffer,
+  };
+
+  vkQueueSubmit(rend->graphics_queue, 1, &submit_info, rend->transfer_fence);
+
+  texture->handle = calloc(1, sizeof(vk_texture_handle_t));
+
+  *(vk_texture_handle_t *)texture->handle = (vk_texture_handle_t){
+      .image = vk_image,
+      .image_alloc = vk_image_alloc,
+      .image_view = vk_image_view,
+      .staging = vk_staging,
+      .staging_alloc = vk_staging_alloc,
+  };
 }
 
 void *VK_GetAgents(vk_rend_t *rend) { return rend->ecs->agents; }

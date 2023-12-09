@@ -9,6 +9,7 @@
 typedef struct client_t client_t;
 typedef struct vk_rend_t vk_rend_t;
 typedef struct vk_system_t vk_system_t;
+typedef struct game_state_t game_state_t;
 
 typedef struct vk_write_t {
   VkBuffer src;
@@ -120,6 +121,27 @@ typedef struct vk_gbuffer_t {
   render_target_t albedo_target;
 } vk_gbuffer_t;
 
+typedef struct vk_texture_handle_t {
+  VkImage image;
+  VmaAllocation image_alloc;
+
+  VkBuffer staging;
+  VmaAllocation staging_alloc;
+
+  VkImageView image_view;
+
+  // In case the texture should be drawn in the immediate pipeline
+  // Not all textures will be
+  VkDescriptorSet set;
+} vk_texture_handle_t;
+
+typedef struct vk_immediate_t {
+  VkPipelineLayout pipeline_layout;
+  VkPipeline pipeline;
+
+  VkDescriptorSetLayout immediate_layout;
+} vk_immediate_t;
+
 typedef struct vk_assets_t {
   // Only GPU Visible
   VkImage *textures;
@@ -196,6 +218,7 @@ struct vk_rend_t {
   VkSampler anisotropy_sampler;
 
   vk_gbuffer_t *gbuffer;
+  vk_immediate_t *immediate;
   vk_ecs_t *ecs;
   vk_assets_t assets;
 
@@ -215,6 +238,10 @@ struct vk_rend_t {
 bool VK_InitGBuffer(vk_rend_t *rend);
 void VK_DrawGBuffer(vk_rend_t *rend);
 void VK_DestroyGBuffer(vk_rend_t *rend);
+
+bool VK_InitImmediate(vk_rend_t *rend);
+void VK_DrawImmediate(vk_rend_t *rend, game_state_t *state);
+void VK_DestroyImmediate(vk_rend_t *rend);
 
 void *CL_GetWindow(client_t *client);
 

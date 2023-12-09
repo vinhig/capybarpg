@@ -23,6 +23,7 @@
 #define CORRIDOR 1
 
 ZPL_TABLE_DECLARE(extern, material_bank_t, G_Materials_, material_t)
+ZPL_TABLE_DECLARE(extern, texture_bank_t, G_Textures_, texture_t)
 
 typedef struct cpu_path_t {
   vec2 *points;
@@ -45,7 +46,11 @@ typedef struct cpu_agent_t {
 typedef struct node_t node_t;
 
 typedef struct worker_t {
+  // Hey hey, I heard QCVM wasn't thread-safe. So i just init a QCVM for each
+  // worker thread. Hope you don't mind!
+  qcvm_t *qcvm;
 
+  unsigned id;
   game_t *game;
 } worker_t;
 
@@ -77,8 +82,6 @@ struct game_t {
   vk_system_t *model_matrix_sys;
   vk_system_t *path_finding_sys;
 
-  qcvm_t *qcvm;
-
   struct map *map;
 
   cpu_agent_t *cpu_agents;
@@ -88,6 +91,7 @@ struct game_t {
   unsigned entity_count;
   unsigned *entities;
 
+  unsigned worker_count;
   worker_t workers[8];
 
   char *base;
@@ -96,8 +100,19 @@ struct game_t {
   unsigned scene_count;
   unsigned scene_capacity;
 
+  scene_t *current_scene;
+
   // Asset banks
   material_bank_t material_bank;
+  texture_bank_t texture_bank;
+
+  // Game state, reset each frame
+  // The renderer use this to draw the frame
+  game_state_t state;
+
+  // Hello
+  vk_rend_t *rend;
+  client_t *client;
 };
 
 game_t *G_CreateGame(client_t *client, char *base) {
@@ -109,15 +124,19 @@ game_t *G_CreateGame(client_t *client, char *base) {
   game->map = jps_create(256, 256);
   game->base = base;
 
+  game->client = client;
+  game->rend = CL_GetRend(client);
+
   game->workers[0] = (worker_t){
       .game = game,
   };
 
   G_Materials_init(&game->material_bank, zpl_heap_allocator());
+  G_Textures_init(&game->texture_bank, zpl_heap_allocator());
 
   // Add "model" system at the end, just compute the model matrix for each
   // transform
-  VK_AddSystem_Transform(CL_GetRend(client), "model_matrix system",
+  VK_AddSystem_Transform(game->rend, "model_matrix system",
                          "model_matrix_frustum.comp.spv");
 
   return game;
@@ -193,44 +212,56 @@ void G_UpdateAgents(game_t *game, unsigned i) {
   }
 }
 
+void G_ResetGameState(game_t *game) { game->state = (game_state_t){}; }
+
 game_state_t G_TickGame(client_t *client, game_t *game) {
-  game_state_t state;
+  G_ResetGameState(game);
+
   unsigned w, h;
   CL_GetViewDim(client, &w, &h);
 
   float ratio = (float)w / (float)h;
 
-  glm_mat4_identity(state.fps.view);
+  glm_mat4_identity(game->state.fps.view);
   float zoom = 0.05f;
   float offset_x = 85.0f / 3.0f;
   float offset_y = 85.0f / 3.0f;
   glm_ortho(-1.0 * ratio / zoom + offset_x, 1.0 * ratio / zoom + offset_x,
             -1.0f / zoom + offset_y, 1.0f / zoom + offset_y, 0.01, 50.0,
-            (vec4 *)&state.fps.view_proj);
+            (vec4 *)&game->state.fps.view_proj);
 
   struct timespec start, end;
   clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 
-  for (unsigned i = 0; i < game->entity_count; i++) {
-    unsigned signature = game->entities[i];
+  if (!game->current_scene) {
+    printf("[WARNING] No current scene hehe...\n");
+  } else {
+    for (unsigned i = 0; i < game->current_scene->update_listener_count; i++) {
+      qcvm_run(game->workers[0].qcvm,
+               game->current_scene->update_listeners[i].qcvm_func);
+    }
 
-    if (signature & agent_signature) {
-      G_UpdateAgents(game, i);
+    for (unsigned i = 0; i < game->entity_count; i++) {
+      unsigned signature = game->entities[i];
+
+      if (signature & agent_signature) {
+        G_UpdateAgents(game, i);
+      }
+    }
+
+    clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+
+    time_t t = (end.tv_sec - start.tv_sec) * 1000000 +
+               (end.tv_nsec - start.tv_nsec) / 1000;
+    t /= 1000;
+    if (t > 10) {
+      printf("Anormaly long update time... %ldms\n", t);
     }
   }
 
-  clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+  VK_TickSystems(game->rend);
 
-  time_t t = (end.tv_sec - start.tv_sec) * 1000000 +
-             (end.tv_nsec - start.tv_nsec) / 1000;
-  t /= 1000;
-  if (t > 10) {
-    printf("Anormaly long update time... %ldms\n", t);
-  }
-
-  VK_TickSystems(CL_GetRend(client));
-
-  return state;
+  return game->state;
 }
 
 texture_t G_LoadSingleTexture(const char *path) {
@@ -250,7 +281,14 @@ texture_t G_LoadSingleTexture(const char *path) {
 int G_Create_Map(game_t *game, unsigned w, unsigned h) { return -1; }
 
 void G_Create_Map_QC(qcvm_t *qcvm) {
-  game_t *game = (game_t *)qcvm_get_user_data(qcvm);
+  worker_t *worker = (worker_t *)qcvm_get_user_data(qcvm);
+  game_t *game = worker->game;
+
+  if (worker->id != 0) {
+    printf(
+        "`G_Create_Map_QC` can only be called from thread 0 (main thread).\n");
+    return;
+  }
 
   float w = qcvm_get_parm_float(qcvm, 0);
   float h = qcvm_get_parm_float(qcvm, 1);
@@ -377,7 +415,14 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
 }
 
 void G_Add_Recipes_QC(qcvm_t *qcvm) {
-  game_t *game = (game_t *)qcvm_get_user_data(qcvm);
+  worker_t *worker = (worker_t *)qcvm_get_user_data(qcvm);
+  game_t *game = worker->game;
+
+  if (worker->id != 0) {
+    printf(
+        "`G_Add_Recipes_QC` can only be called from thread 0 (main thread).\n");
+    return;
+  }
 
   const char *path = qcvm_get_parm_string(qcvm, 0);
   bool required = qcvm_get_parm_int(qcvm, 1);
@@ -385,14 +430,123 @@ void G_Add_Recipes_QC(qcvm_t *qcvm) {
   qcvm_return_int(qcvm, (int)G_Add_Recipes(game, path, required));
 }
 
-void G_Load_Game_QC(qcvm_t *qcvm) {}
+void G_Draw_Image_Relative(game_t *game, const char *path, float w, float h,
+                           float x, float y, float z) {
+  // Is the image loaded?
+  zpl_u64 key = zpl_fnv64(path, strlen(path));
+  texture_t *texture = G_Textures_get(&game->texture_bank, key);
+
+  if (!texture) {
+    char complete_path[256];
+    sprintf(&complete_path[0], "%s/%s", game->base, path);
+    printf("[VERBOSE] G_Draw_Image_Relative(\"%s\");\n", &complete_path[0]);
+    texture_t t = G_LoadSingleTexture(complete_path);
+
+    G_Textures_set(&game->texture_bank, key, t);
+    texture = G_Textures_get(&game->texture_bank, key);
+    if (!t.data) {
+      printf("[ERROR] Couldn't load texture referenced in "
+             "`G_Draw_Image_Relative`, namely \"%s\".\n",
+             path);
+
+      return;
+    } else {
+      VK_UploadSingleTexture(game->rend, texture);
+    }
+  }
+
+  // Now it's loaded for sure, update the state to add a draw call referencing
+  // this image
+  game->state.draws[game->state.draw_count].x = x;
+  game->state.draws[game->state.draw_count].y = y;
+  game->state.draws[game->state.draw_count].z = z;
+  game->state.draws[game->state.draw_count].w = w;
+  game->state.draws[game->state.draw_count].h = h;
+  game->state.draws[game->state.draw_count].handle = texture->handle;
+
+  game->state.draw_count++;
+}
+
+void G_Draw_Image_Relative_QC(qcvm_t *qcvm) {
+  const char *path = qcvm_get_parm_string(qcvm, 0);
+  float w = qcvm_get_parm_float(qcvm, 1);
+  float h = qcvm_get_parm_float(qcvm, 2);
+  float x = qcvm_get_parm_float(qcvm, 3);
+  float y = qcvm_get_parm_float(qcvm, 4);
+  float z = qcvm_get_parm_float(qcvm, 5);
+
+  game_t *game = ((worker_t *)qcvm_get_user_data(qcvm))->game;
+
+  G_Draw_Image_Relative(game, path, w, h, x, y, z);
+}
+
+void G_Run_Scene(worker_t *worker, const char *scene_name) {
+  printf("G_Run_Scene(\"%s\");\n", scene_name);
+  game_t *game = worker->game;
+
+  // Fetch the scene with this name
+  scene_t *scene;
+  for (unsigned i = 0; i < game->scene_count; i++) {
+    if (strcmp(game->scenes[i].name, scene_name) == 0) {
+      scene = &game->scenes[i];
+      break;
+    }
+  }
+
+  if (scene == NULL) {
+    printf("[ERROR] Current game doesn't have a scene with that name `%s`.\n",
+           scene_name);
+    return;
+  }
+
+  // First, call all the end listeners in order for the previous scene
+  // The invokation of listeners happens on the same thread that called
+  // G_Run_Scene. I don't know if it's a good idea...
+  if (game->current_scene) {
+    for (unsigned j = 0; j < game->current_scene->end_listener_count; j++) {
+      qcvm_run(worker->qcvm, game->current_scene->end_listeners[j].qcvm_func);
+    }
+  }
+
+  // The specified scene become the current scene
+  game->current_scene = scene;
+
+  // Then call all start listeners in order
+  for (unsigned j = 0; j < game->current_scene->start_listener_count; j++) {
+    qcvm_run(worker->qcvm, game->current_scene->start_listeners[j].qcvm_func);
+  }
+}
+
+void G_Run_Scene_QC(qcvm_t *qcvm) {
+  worker_t *worker = (worker_t *)qcvm_get_user_data(qcvm);
+
+  const char *scene_name = qcvm_get_parm_string(qcvm, 0);
+
+  G_Run_Scene(worker, scene_name);
+}
+
+void G_Load_Game_QC(qcvm_t *qcvm) {
+  worker_t *worker = (worker_t *)qcvm_get_user_data(qcvm);
+  game_t *game = worker->game;
+
+  const char *loading_scene_name = qcvm_get_parm_string(qcvm, 0);
+  const char *next_scene = qcvm_get_parm_string(qcvm, 0);
+
+  if (worker->id != 0) {
+    printf(
+        "`G_Load_Game_QC` can only be called from thread 0 (main thread).\n");
+    return;
+  }
+
+  G_Run_Scene(worker, loading_scene_name);
+}
 
 const char *G_Get_Last_Asset_Loaded(game_t *game) {
   return "not yet implemented!";
 }
 
 void G_Get_Last_Asset_Loaded_QC(qcvm_t *qcvm) {
-  game_t *game = (game_t *)qcvm_get_user_data(qcvm);
+  game_t *game = ((worker_t *)qcvm_get_user_data(qcvm))->game;
 
   qcvm_return_string(qcvm, G_Get_Last_Asset_Loaded(game));
 }
@@ -421,7 +575,14 @@ void G_Add_Scene(game_t *game, const char *name) {
 void G_Add_Scene_QC(qcvm_t *qcvm) {
   const char *scene_name = qcvm_get_parm_string(qcvm, 0);
 
-  game_t *game = (game_t *)qcvm_get_user_data(qcvm);
+  worker_t *worker = (worker_t *)qcvm_get_user_data(qcvm);
+  game_t *game = worker->game;
+
+  if (worker->id != 0) {
+    printf(
+        "`G_Add_Scene_QC` can only be called from thread 0 (main thread).\n");
+    return;
+  }
 
   G_Add_Scene(game, scene_name);
 }
@@ -530,12 +691,11 @@ void G_Add_Listener_QC(qcvm_t *qcvm) {
     return;
   }
 
-  G_Add_Listener(qcvm_get_user_data(qcvm), listener_type, attachment, func_id);
+  G_Add_Listener(((worker_t *)qcvm_get_user_data(qcvm))->game, listener_type,
+                 attachment, func_id);
 }
 
-void G_Run_Scene_QC(qcvm_t *qcvm) {}
-
-void G_Install_QCVM(game_t *game) {
+void G_Install_QCVM(worker_t *worker) {
   qcvm_export_t export_G_Add_Recipes = {
       .func = G_Add_Recipes_QC,
       .name = "G_Add_Recipes",
@@ -600,248 +760,81 @@ void G_Install_QCVM(game_t *game) {
       .args[2] = {.name = "func", .type = QCVM_STRING},
   };
 
-  qcvm_add_export(game->qcvm, &export_G_Add_Recipes);
-  qcvm_add_export(game->qcvm, &export_G_Load_Game);
-  qcvm_add_export(game->qcvm, &export_G_Get_Last_Asset_Loaded);
-  qcvm_add_export(game->qcvm, &export_G_Add_Scene);
-  qcvm_add_export(game->qcvm, &export_G_Run_Scene);
-  qcvm_add_export(game->qcvm, &export_G_Create_Map);
-  qcvm_add_export(game->qcvm, &export_G_Add_Wall);
-  qcvm_add_export(game->qcvm, &export_G_Add_Listener);
+  qcvm_export_t export_G_Draw_Image_Relative = {
+      .func = G_Draw_Image_Relative_QC,
+      .name = "G_Draw_Image_Relative",
+      .argc = 6,
+      .args[0] = {.name = "path", .type = QCVM_STRING},
+      .args[1] = {.name = "w", .type = QCVM_FLOAT},
+      .args[2] = {.name = "h", .type = QCVM_FLOAT},
+      .args[3] = {.name = "x", .type = QCVM_FLOAT},
+      .args[4] = {.name = "y", .type = QCVM_FLOAT},
+      .args[5] = {.name = "z", .type = QCVM_FLOAT},
+  };
+
+  qcvm_add_export(worker->qcvm, &export_G_Add_Recipes);
+  qcvm_add_export(worker->qcvm, &export_G_Load_Game);
+  qcvm_add_export(worker->qcvm, &export_G_Get_Last_Asset_Loaded);
+  qcvm_add_export(worker->qcvm, &export_G_Add_Scene);
+  qcvm_add_export(worker->qcvm, &export_G_Run_Scene);
+  qcvm_add_export(worker->qcvm, &export_G_Create_Map);
+  qcvm_add_export(worker->qcvm, &export_G_Add_Wall);
+  qcvm_add_export(worker->qcvm, &export_G_Add_Listener);
+  qcvm_add_export(worker->qcvm, &export_G_Draw_Image_Relative);
 }
 
 bool G_Load(client_t *client, game_t *game) {
+  // TODO: should find a way to correctly guess the number of workers
+  game->worker_count = 8;
+
   game->cpu_agents = calloc(3000, sizeof(cpu_agent_t));
   time_t seed = time(NULL);
   srand(seed);
-  unsigned texture_count = 33;
-  texture_t *textures = malloc(sizeof(texture_t) * texture_count);
   // Try to fetch the progs.dat of the specified game
   char progs_dat[256];
   sprintf(&progs_dat[0], "%s/progs.dat", game->base);
-  printf("trying to load %s\n", progs_dat);
 
-  game->qcvm = qcvm_from_file(progs_dat);
-
-  if (!game->qcvm) {
-    printf("Couldn't load `%s`. Aborting, the game isn't playable.\n",
-           progs_dat);
-    return false;
+  FILE *f = fopen(&progs_dat[0], "rb");
+  if (!f) {
+    printf("`%s` file doesn't seem to exist.\n", progs_dat);
+    return NULL;
   }
 
-  qclib_install(game->qcvm);
-  G_Install_QCVM(game);
+  fseek(f, 0, SEEK_END);
+  size_t size = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  char *bytes = malloc(size);
+  fread(bytes, size, 1, f);
+  fclose(f);
 
-  qcvm_set_user_data(game->qcvm, game);
+  for (unsigned i = 0; i < game->worker_count; i++) {
+    game->workers[i].qcvm = qcvm_from_memory(bytes, size);
+    if (!game->workers[i].qcvm) {
+      printf("Couldn't load `%s`. Aborting, the game isn't playable.\n",
+             progs_dat);
+      return false;
+    }
 
-  int main_func = qcvm_find_function(game->qcvm, "main");
+    qclib_install(game->workers[i].qcvm);
+    G_Install_QCVM(&game->workers[i]);
+
+    game->workers[i].id = i;
+    qcvm_set_user_data(game->workers[i].qcvm, &game->workers[i]);
+  }
+
+  // Run the QuakeC main function on the first worker
+  int main_func = qcvm_find_function(game->workers[0].qcvm, "main");
   if (main_func < 1) {
-    printf("oh nooo.\n");
+    printf("[ERROR] No main function in `progs.dat`.\n");
     return false;
-  } else {
-    printf("main_func = %d\n", main_func);
   }
-  qcvm_run(game->qcvm, main_func);
-
-  // Just load the hardcoded animals atm
-  textures[0] = G_LoadSingleTexture("../base/Bison_east.png");
-  textures[1] = G_LoadSingleTexture("../base/Bison_north.png");
-  textures[2] = G_LoadSingleTexture("../base/Bison_south.png");
-
-  textures[3] = G_LoadSingleTexture("../base/Thrumbo_east.png");
-  textures[4] = G_LoadSingleTexture("../base/Thrumbo_north.png");
-  textures[5] = G_LoadSingleTexture("../base/Thrumbo_south.png");
-
-  textures[6] = G_LoadSingleTexture("../base/YorkshireTerrier_east.png");
-  textures[7] = G_LoadSingleTexture("../base/YorkshireTerrier_north.png");
-  textures[8] = G_LoadSingleTexture("../base/YorkshireTerrier_south.png");
-
-  textures[9] = G_LoadSingleTexture("../base/DuckMale_east.png");
-  textures[10] = G_LoadSingleTexture("../base/DuckMale_north.png");
-  textures[11] = G_LoadSingleTexture("../base/DuckMale_south.png");
-
-  textures[12] = G_LoadSingleTexture("../base/dirt.png");
-  textures[13] = G_LoadSingleTexture("../base/walls/Brick_Wall_01.png");
-
-  textures[14] = G_LoadSingleTexture("../base/furnitures/bed_east.png");
-  textures[15] = G_LoadSingleTexture("../base/furnitures/bed_north.png");
-  textures[16] = G_LoadSingleTexture("../base/furnitures/bed_south.png");
-
-  for (unsigned t = 0; t < 16; t++) {
-    char name[256];
-    sprintf(name, "../base/walls/Brick_Wall_%02d.png", t);
-    textures[17 + t] = G_LoadSingleTexture(name);
-  }
-
-  for (unsigned i = 0; i < 10; i++) {
-    unsigned texture = 0;
-
-    struct Sprite sprite = {
-        .texture_east = texture,
-        .texture_north = texture + 1,
-        .texture_south = texture + 2,
-    };
-
-    float scale = 0.0f;
-
-    switch (texture) {
-    case 0: {
-      scale = 2.4;
-      break;
-    }
-    case 3: {
-      scale = 4.0;
-      break;
-    }
-    case 6: {
-      scale = 0.32;
-      break;
-    }
-    case 9: {
-      scale = 0.3;
-      break;
-    }
-    }
-
-    struct Transform transform = {
-        .position =
-            {
-                [0] = ((float)(rand() % 8) * 8.0f) + 0.0f + 60.0f,
-                [1] = ((float)(rand() % 8) * 8.0f) + 2.0f + 60.0f,
-                [2] = 0.0f,
-                [3] = 1.0f,
-            },
-        .scale =
-            {
-                [0] = scale,
-                [1] = scale,
-                [2] = scale,
-                [3] = 1.0f,
-            },
-    };
-    G_AddPawn(client, game, &transform, &sprite);
-  }
-
-  VK_UploadTextures(CL_GetRend(client), textures, texture_count);
-
-  struct Tile tiles[256][256];
-
-  for (unsigned x = 0; x < 256; x++) {
-    for (unsigned y = 0; y < 256; y++) {
-      tiles[x][y].texture = 12;
-      tiles[x][y].wall = 0;
-    }
-  }
-
-  if (CORRIDOR) {
-    unsigned room_1_count = 0;
-    unsigned *room_1 = malloc(sizeof(unsigned) * 512);
-
-    G_Rectangle((ivec2){10, 10}, (ivec2){60, 20}, room_1, &room_1_count);
-
-    for (unsigned i = 0; i < room_1_count; i++) {
-      unsigned row = room_1[i] / 256;
-      unsigned col = room_1[i] % 256;
-      jps_set_obstacle(game->map, col, row, true);
-      tiles[col][row].wall = 1;
-      tiles[col][row].texture = 13;
-    }
-
-    unsigned row = room_1[9] / 256;
-    unsigned col = room_1[9] % 256;
-    jps_set_obstacle(game->map, col, row, false);
-    tiles[col][row].wall = 0;
-    tiles[col][row].texture = 12;
-
-    G_Rectangle((ivec2){10, 20}, (ivec2){60, 30}, room_1, &room_1_count);
-
-    for (unsigned i = 0; i < room_1_count; i++) {
-      unsigned row = room_1[i] / 256;
-      unsigned col = room_1[i] % 256;
-      jps_set_obstacle(game->map, col, row, true);
-      tiles[col][row].wall = 1;
-      tiles[col][row].texture = 13;
-    }
-
-    row = room_1[40] / 256;
-    col = room_1[40] % 256;
-    jps_set_obstacle(game->map, col, row, false);
-    tiles[col][row].wall = 0;
-    tiles[col][row].texture = 12;
-
-    G_Rectangle((ivec2){10, 30}, (ivec2){60, 40}, room_1, &room_1_count);
-
-    for (unsigned i = 0; i < room_1_count; i++) {
-      unsigned row = room_1[i] / 256;
-      unsigned col = room_1[i] % 256;
-      jps_set_obstacle(game->map, col, row, true);
-      tiles[col][row].wall = 1;
-      tiles[col][row].texture = 13;
-    }
-
-    row = room_1[9] / 256;
-    col = room_1[9] % 256;
-    jps_set_obstacle(game->map, col, row, false);
-    tiles[col][row].wall = 0;
-    tiles[col][row].texture = 12;
-  } else {
-    for (unsigned i = 0; i < 10000; i++) {
-      unsigned row = rand() % 256;
-      unsigned col = rand() % 256;
-
-      if (row != 0 && col != 0) {
-        jps_set_obstacle(game->map, col, row, true);
-        tiles[col][row].wall = 1;
-        tiles[col][row].texture = 13;
-      }
-    }
-  }
-
-  jps_mark_connected(game->map);
-  jps_dump_connected(game->map);
-
-  VK_SetMap(CL_GetRend(client), &tiles[0][0], 256, 256);
-
-  struct Immovable bed = {
-      .size = {1.0, 2.0},
-  };
-
-  G_AddFurniture(client, game,
-                 &(struct Transform){
-                     .position = {11.0f, 11.0f, 10.0f, 1.0f},
-                     .rotation = {0.0f, 0.0f, 0.0f},
-                     .scale = {1.0, 1.0, 1.0, 1.0},
-                 },
-                 &(struct Sprite){
-                     .texture_east = 14,
-                     .texture_north = 15,
-                     .texture_south = 16,
-                     .current = 15,
-                 },
-                 &bed);
-
-  bed = (struct Immovable){
-      .size = {2.0, 1.0},
-  };
-  G_AddFurniture(client, game,
-                 &(struct Transform){
-                     .position = {12.0f, 11.0f, 10.0f, 1.0f},
-                     .rotation = {0.0f, 0.0f, 0.0f},
-                     .scale = {1.0, 1.0, 1.0, 1.0},
-                 },
-                 &(struct Sprite){
-                     .texture_east = 14,
-                     .texture_north = 15,
-                     .texture_south = 16,
-                     .current = 14,
-                 },
-                 &bed);
+  qcvm_run(game->workers[0].qcvm, main_func);
 
   // Get the mapped data from the renderer
-  game->gpu_agents = VK_GetAgents(CL_GetRend(client));
-  game->transforms = VK_GetTransforms(CL_GetRend(client));
-  game->gpu_tiles = VK_GetMap(CL_GetRend(client));
-  game->entities = VK_GetEntities(CL_GetRend(client));
+  game->gpu_agents = VK_GetAgents(game->rend);
+  game->transforms = VK_GetTransforms(game->rend);
+  game->gpu_tiles = VK_GetMap(game->rend);
+  game->entities = VK_GetEntities(game->rend);
 
   return true;
 }
@@ -849,7 +842,7 @@ bool G_Load(client_t *client, game_t *game) {
 void G_AddFurniture(client_t *client, game_t *game, struct Transform *transform,
                     struct Sprite *sprite, struct Immovable *immovable) {
   game->entity_count += 1;
-  vk_rend_t *rend = CL_GetRend(client);
+  vk_rend_t *rend = game->rend;
   unsigned entity =
       VK_Add_Entity(rend, transform_signature | model_transform_signature |
                               sprite_signature | immovable_signature);
@@ -863,7 +856,7 @@ void G_AddFurniture(client_t *client, game_t *game, struct Transform *transform,
 void G_AddPawn(client_t *client, game_t *game, struct Transform *transform,
                struct Sprite *sprite) {
   game->entity_count += 1;
-  vk_rend_t *rend = CL_GetRend(client);
+  vk_rend_t *rend = game->rend;
   unsigned entity =
       VK_Add_Entity(rend, transform_signature | model_transform_signature |
                               agent_signature | sprite_signature);

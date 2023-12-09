@@ -24,6 +24,13 @@ typedef struct game_state_t {
     // vec3 pos;
   } fps;
 
+  struct {
+    float x, y, z;
+    float w, h;
+    void *handle;
+  } draws[64];
+  unsigned draw_count;
+
 } game_state_t;
 
 typedef struct material_t {
@@ -48,7 +55,7 @@ void G_AddPawn(client_t *client, game_t *game, struct Transform *transform,
 /// Transform, Model Transform, and Sprite components). Register it to the list
 /// of usable material if applicable.
 void G_AddFurniture(client_t *client, game_t *game, struct Transform *transform,
-                    struct Sprite *sprite, struct Immovable* immovable);
+                    struct Sprite *sprite, struct Immovable *immovable);
 
 game_state_t G_TickGame(client_t *client, game_t *game);
 

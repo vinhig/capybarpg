@@ -23,6 +23,8 @@ endif
 shaders = [
   'source/shaders/gbuffer.vert.glsl',
   'source/shaders/gbuffer.frag.glsl',
+  'source/shaders/immediate.vert.glsl',
+  'source/shaders/immediate.frag.glsl',
   # 'source/shaders/shading.comp.glsl',
   'source/shaders/systems/model_matrix_frustum.comp.glsl',
   # 'source/shaders/systems/path_finding.comp.glsl',
@@ -96,8 +98,8 @@ exe = executable('maidenless',
   'source/game/g_shape.c',
 
   'source/vk/vk.c',
-  # 'source/vk/vk_shading.c',
   'source/vk/vk_gbuffer.c',
+  'source/vk/vk_immediate.c',
   'source/vk/vk_system.c',
 
   'external/toml.c',
