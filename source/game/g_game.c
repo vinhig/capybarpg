@@ -16,10 +16,13 @@
 #include <intlist.h>
 #include <jps.h>
 #include <qcvm/qcvm.h>
+#include <zpl/zpl.h>
 //
 #include <qclib/qclib.h>
 
 #define CORRIDOR 1
+
+ZPL_TABLE_DECLARE(extern, material_bank_t, G_Materials_, material_t)
 
 typedef struct cpu_path_t {
   vec2 *points;
@@ -92,6 +95,9 @@ struct game_t {
   scene_t *scenes;
   unsigned scene_count;
   unsigned scene_capacity;
+
+  // Asset banks
+  material_bank_t material_bank;
 };
 
 game_t *G_CreateGame(client_t *client, char *base) {
@@ -106,6 +112,8 @@ game_t *G_CreateGame(client_t *client, char *base) {
   game->workers[0] = (worker_t){
       .game = game,
   };
+
+  G_Materials_init(&game->material_bank, zpl_heap_allocator());
 
   // Add "model" system at the end, just compute the model matrix for each
   // transform
@@ -239,21 +247,159 @@ texture_t G_LoadSingleTexture(const char *path) {
   };
 }
 
-bool G_Add_Recipes(game_t* game, const char* path, bool required) {
-  return false;
+int G_Create_Map(game_t *game, unsigned w, unsigned h) { return -1; }
+
+void G_Create_Map_QC(qcvm_t *qcvm) {
+  game_t *game = (game_t *)qcvm_get_user_data(qcvm);
+
+  float w = qcvm_get_parm_float(qcvm, 0);
+  float h = qcvm_get_parm_float(qcvm, 1);
+
+  if (w <= 0.0f) {
+    printf("[ERROR] Can't initialize a map with a negative or null width (%f "
+           "was specified).\n",
+           w);
+    qcvm_return_int(qcvm, -1);
+    return;
+  }
+
+  if (h <= 0.0f) {
+    printf("[ERROR] Can't initialize a map with a negative or null height (%f "
+           "was specified).\n",
+           w);
+    qcvm_return_int(qcvm, -1);
+    return;
+  }
+
+  qcvm_return_int(qcvm, G_Create_Map(game, w, h));
 }
 
-void G_Add_Recipes_QC(qcvm_t* qcvm) {};
+bool G_Add_Recipes(game_t *game, const char *path, bool required) {
+  char base_path[256];
+  sprintf(&base_path[0], "%s/%s", game->base, path);
+  FILE *f = fopen(base_path, "r");
 
-void G_Load_Game_QC(qcvm_t* qcvm) {}
+  if (!f) {
+    printf("[WARNING] The recipes file `%s`|`%s` doesn't seem to exist (skill "
+           "issue).\n",
+           path, base_path);
+    return 0;
+  }
 
-const char* G_Get_Last_Asset_Loaded(game_t* game) {}
+  fseek(f, 0, SEEK_END);
+  size_t size = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  char *content = malloc(size);
+  fread(content, 1, size, f);
+  zpl_json_object recipes = {0};
+  zpl_u8 err;
+  err = zpl_json_parse(&recipes, content, zpl_heap_allocator());
 
-void G_Get_Last_Asset_Loaded_QC(qcvm_t* qcvm) {}
+  if (err != ZPL_JSON_ERROR_NONE) {
+    printf("[ERROR] The recipes file `%s` isn't a valid JSON.\n", path);
+    return 0;
+  }
 
-void G_Add_Wall(game_t* game, int x, int y, const char* recipe) {}
+  // It's a valid JSON
+  // Let's parse it, yeah!
 
-void G_Add_Wall_QC(qcvm_t* qcvm) {}
+  // A recipe can have these sections:
+  // * walls
+  // * furnitures
+  // * items
+  // * materials
+  // * animals
+  // We extract them here in a specific order, cause there are some dependencies
+  // (furnitures and walls are built with materials for example)
+  zpl_json_object *materials = zpl_adt_find(&recipes, "materials", false);
+  zpl_json_object *walls = zpl_adt_find(&recipes, "walls", false);
+  zpl_json_object *furnitures = zpl_adt_find(&recipes, "furnitures", false);
+  zpl_json_object *items = zpl_adt_find(&recipes, "items", false);
+
+  // The info extraction is a bit weird as mod can overwrite what was previously
+  // specified. So if there isn't a element of a specific type in the asset bank
+  // with that name, we create it. Otherwise, we simply update its properties
+  // (for example a mod "Stronger Walls" doesn't have to re-specify every single
+  // sprites, just the health). So the identifier is the only mandatory field.
+  // Yes I know something like Rust or Go would have been smarter than all this
+  // manual bullshit.
+
+  if (materials && materials->type == ZPL_ADT_TYPE_ARRAY) {
+    unsigned size = zpl_array_count(materials->nodes);
+    for (unsigned i = 0; i < size; i++) {
+      zpl_adt_node *element = &materials->nodes[i];
+      zpl_adt_node *id_node = zpl_adt_find(element, "id", false);
+
+      if (!id_node || id_node->type != ZPL_ADT_TYPE_STRING) {
+        printf("[WARNING] The element %d in the 'materials' list doesn't have "
+               "an ID (of type string).\n",
+               i);
+        continue;
+      } else {
+        zpl_u64 key = zpl_fnv64(id_node->string, strlen(id_node->string));
+        // Does the bank contains this element? If not create an empty one.
+        material_t *material = G_Materials_get(&game->material_bank, key);
+
+        if (!material) {
+          G_Materials_set(&game->material_bank, key, (material_t){});
+          material_t *material = G_Materials_get(&game->material_bank, key);
+        }
+
+        // Extract all relevant info from the JSON field
+        zpl_adt_node *name_node = zpl_adt_find(element, "name", false);
+        zpl_adt_node *stack_size_node = zpl_adt_find(element, "name", false);
+        zpl_adt_node *sprites_node = zpl_adt_find(element, "sprites", false);
+
+        zpl_adt_node *low_stack_node = NULL;
+        zpl_adt_node *half_stack_node = NULL;
+        zpl_adt_node *full_stack_node = NULL;
+
+        // Some field may be NULL if not present, we don't care
+        if (name_node && name_node->type == ZPL_ADT_TYPE_STRING) {
+        }
+
+        if (stack_size_node && stack_size_node->type == ZPL_ADT_TYPE_INTEGER) {
+        }
+
+        if (sprites_node && sprites_node->type == ZPL_ADT_TYPE_OBJECT) {
+          low_stack_node = zpl_adt_find(sprites_node, "low_stack", false);
+          half_stack_node = zpl_adt_find(sprites_node, "half_stack", false);
+          full_stack_node = zpl_adt_find(sprites_node, "full_stack", false);
+        }
+      }
+    }
+  } else {
+    printf("[DEBUG] No 'materials' specified in `%s`.\n", path);
+  }
+
+  zpl_json_free(&recipes);
+  return true;
+}
+
+void G_Add_Recipes_QC(qcvm_t *qcvm) {
+  game_t *game = (game_t *)qcvm_get_user_data(qcvm);
+
+  const char *path = qcvm_get_parm_string(qcvm, 0);
+  bool required = qcvm_get_parm_int(qcvm, 1);
+
+  qcvm_return_int(qcvm, (int)G_Add_Recipes(game, path, required));
+}
+
+void G_Load_Game_QC(qcvm_t *qcvm) {}
+
+const char *G_Get_Last_Asset_Loaded(game_t *game) {
+  return "not yet implemented!";
+}
+
+void G_Get_Last_Asset_Loaded_QC(qcvm_t *qcvm) {
+  game_t *game = (game_t *)qcvm_get_user_data(qcvm);
+
+  qcvm_return_string(qcvm, G_Get_Last_Asset_Loaded(game));
+}
+
+void G_Add_Wall(game_t *game, int x, int y, const char *recipe) {}
+
+void G_Add_Wall_QC(qcvm_t *qcvm) {}
 
 void G_Add_Scene(game_t *game, const char *name) {
   if (game->scene_capacity == 0) {
@@ -390,11 +536,59 @@ void G_Add_Listener_QC(qcvm_t *qcvm) {
 void G_Run_Scene_QC(qcvm_t *qcvm) {}
 
 void G_Install_QCVM(game_t *game) {
+  qcvm_export_t export_G_Add_Recipes = {
+      .func = G_Add_Recipes_QC,
+      .name = "G_Add_Recipes",
+      .argc = 2,
+      .args[0] = {.name = "path", .type = QCVM_STRING},
+      .args[1] = {.name = "required", .type = QCVM_INT},
+  };
+
+  qcvm_export_t export_G_Load_Game = {
+      .func = G_Load_Game_QC,
+      .name = "G_Load_Game",
+      .argc = 1,
+      .args[0] = {.name = "scene_name", .type = QCVM_STRING},
+  };
+
+  qcvm_export_t export_G_Get_Last_Asset_Loaded = {
+      .func = G_Get_Last_Asset_Loaded_QC,
+      .name = "G_Get_Last_Asset_Loaded",
+      .argc = 0,
+  };
+
   qcvm_export_t export_G_Add_Scene = {
       .func = G_Add_Scene_QC,
       .name = "G_Add_Scene",
       .argc = 1,
       .args[0] = {.name = "s", .type = QCVM_STRING},
+  };
+
+  qcvm_export_t export_G_Run_Scene = {
+      .func = G_Run_Scene_QC,
+      .name = "G_Run_Scene",
+      .argc = 1,
+      .args[0] = {.name = "s", .type = QCVM_STRING},
+  };
+
+  qcvm_export_t export_G_Create_Map = {
+      .func = G_Create_Map_QC,
+      .name = "G_Create_Map",
+      .argc = 2,
+      .args[0] = {.name = "w", .type = QCVM_FLOAT},
+      .args[1] = {.name = "h", .type = QCVM_FLOAT},
+      .type = QCVM_INT,
+  };
+
+  qcvm_export_t export_G_Add_Wall = {
+      .func = G_Add_Wall_QC,
+      .name = "G_Add_Wall",
+      .argc = 5,
+      .args[0] = {.name = "recipe", .type = QCVM_STRING},
+      .args[1] = {.name = "x", .type = QCVM_FLOAT},
+      .args[2] = {.name = "y", .type = QCVM_FLOAT},
+      .args[3] = {.name = "health", .type = QCVM_FLOAT},
+      .args[4] = {.name = "to_build", .type = QCVM_INT},
   };
 
   qcvm_export_t export_G_Add_Listener = {
@@ -406,16 +600,14 @@ void G_Install_QCVM(game_t *game) {
       .args[2] = {.name = "func", .type = QCVM_STRING},
   };
 
-  qcvm_export_t export_G_Run_Scene = {
-      .func = G_Run_Scene_QC,
-      .name = "G_Run_Scene",
-      .argc = 1,
-      .args[0] = {.name = "s", .type = QCVM_STRING},
-  };
-
+  qcvm_add_export(game->qcvm, &export_G_Add_Recipes);
+  qcvm_add_export(game->qcvm, &export_G_Load_Game);
+  qcvm_add_export(game->qcvm, &export_G_Get_Last_Asset_Loaded);
   qcvm_add_export(game->qcvm, &export_G_Add_Scene);
-  qcvm_add_export(game->qcvm, &export_G_Add_Listener);
   qcvm_add_export(game->qcvm, &export_G_Run_Scene);
+  qcvm_add_export(game->qcvm, &export_G_Create_Map);
+  qcvm_add_export(game->qcvm, &export_G_Add_Wall);
+  qcvm_add_export(game->qcvm, &export_G_Add_Listener);
 }
 
 bool G_Load(client_t *client, game_t *game) {

@@ -1,7 +1,7 @@
 # , 'b_lundef=false', 'b_sanitize=address,undefined'
 project('maidenless', 'c', 'cpp',
   version : '0.1',
-  default_options : ['warning_level=3', 'c_std=c11', 'cpp_std=c++17'])
+  default_options : ['warning_level=3', 'c_std=gnu11', 'cpp_std=c++17'])
 
 cc = meson.get_compiler('c')
 m = cc.find_library('m', required : false)
@@ -30,12 +30,13 @@ shaders = [
 
 add_global_arguments(
   '-Wall',
+  '-Wno-pedantic',
   '-Wno-unused-parameter',
   '-Wno-nullability-extension',
   language: 'c',
 )
 
-# CPP files aren't my code, don't want to mess the warnings
+# CPP files aren't my code, don't want to mess with the warnings
 add_global_arguments(
   '-w',
   '-Wno-nullability-extension',
@@ -91,6 +92,7 @@ exe = executable('maidenless',
   'source/client/cl_client.c',
 
   'source/game/g_game.c',
+  'source/game/g_data.c',
   'source/game/g_shape.c',
 
   'source/vk/vk.c',
@@ -99,6 +101,7 @@ exe = executable('maidenless',
   'source/vk/vk_system.c',
 
   'external/toml.c',
+  'external/zpl/zpl_implementation.c',
   'external/cgltf.c',
   'external/vk_mem_alloc.cpp',
   'external/stbi_image.c',

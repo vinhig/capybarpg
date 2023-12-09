@@ -26,6 +26,10 @@ typedef struct game_state_t {
 
 } game_state_t;
 
+typedef struct material_t {
+  const char *name;
+} material_t;
+
 /// @brief Create a new game, allocating the memory for it. Read `main.toml`
 /// from the given base folder, and set it as the current scene. No assets
 /// loading occurs.

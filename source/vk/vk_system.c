@@ -890,6 +890,11 @@ void VK_DestroyECS(vk_rend_t *rend) {
   vmaDestroyBuffer(rend->allocator, rend->ecs->a_tmp_buffer,
                    rend->ecs->a_tmp_alloc);
 
+  vmaDestroyBuffer(rend->allocator, rend->ecs->i_tmp_buffer,
+                   rend->ecs->i_tmp_alloc);
+  vmaDestroyBuffer(rend->allocator, rend->ecs->i_buffer,
+                   rend->ecs->i_alloc);
+
   vmaDestroyBuffer(rend->allocator, rend->ecs->s_tmp_buffer,
                    rend->ecs->s_tmp_alloc);
   vmaDestroyBuffer(rend->allocator, rend->ecs->s_buffer, rend->ecs->s_alloc);
