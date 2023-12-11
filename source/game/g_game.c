@@ -442,8 +442,6 @@ void G_Draw_Image_Relative(game_t *game, const char *path, float w, float h,
     printf("[VERBOSE] G_Draw_Image_Relative(\"%s\");\n", &complete_path[0]);
     texture_t t = G_LoadSingleTexture(complete_path);
 
-    G_Textures_set(&game->texture_bank, key, t);
-    texture = G_Textures_get(&game->texture_bank, key);
     if (!t.data) {
       printf("[ERROR] Couldn't load texture referenced in "
              "`G_Draw_Image_Relative`, namely \"%s\".\n",
@@ -451,20 +449,26 @@ void G_Draw_Image_Relative(game_t *game, const char *path, float w, float h,
 
       return;
     } else {
+      G_Textures_set(&game->texture_bank, key, t);
+      texture = G_Textures_get(&game->texture_bank, key);
+
       VK_UploadSingleTexture(game->rend, texture);
+
     }
   }
 
   // Now it's loaded for sure, update the state to add a draw call referencing
   // this image
-  game->state.draws[game->state.draw_count].x = x;
-  game->state.draws[game->state.draw_count].y = y;
-  game->state.draws[game->state.draw_count].z = z;
-  game->state.draws[game->state.draw_count].w = w;
-  game->state.draws[game->state.draw_count].h = h;
-  game->state.draws[game->state.draw_count].handle = texture->handle;
+  if (texture) {
+    game->state.draws[game->state.draw_count].x = x;
+    game->state.draws[game->state.draw_count].y = y;
+    game->state.draws[game->state.draw_count].z = z;
+    game->state.draws[game->state.draw_count].w = w;
+    game->state.draws[game->state.draw_count].h = h;
+    game->state.draws[game->state.draw_count].handle = texture->handle;
 
-  game->state.draw_count++;
+    game->state.draw_count++;
+  }
 }
 
 void G_Draw_Image_Relative_QC(qcvm_t *qcvm) {

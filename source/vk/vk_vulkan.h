@@ -11,7 +11,7 @@ typedef struct texture_t {
   unsigned char *data;
   const char *label;
 
-  void *handle;
+  unsigned handle;
 } texture_t;
 
 typedef struct vk_model_t vk_model_t;

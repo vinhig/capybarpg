@@ -152,6 +152,10 @@ typedef struct vk_assets_t {
   VmaAllocation *textures_staging_allocs;
 
   unsigned texture_count;
+
+  vk_texture_handle_t *handles;
+  unsigned handle_count;
+  unsigned handle_capacity;
 } vk_assets_t;
 
 typedef struct vk_global_ubo_t {

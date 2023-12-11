@@ -908,6 +908,9 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
     VK_PUSH_ERROR("Couldn't create a specific pipeline: Immediate.");
   }
 
+  rend->assets.handle_capacity = 16;
+  rend->assets.handles = calloc(16, sizeof(vk_texture_handle_t));
+
   return rend;
 }
 
@@ -1159,9 +1162,19 @@ void VK_Draw(vk_rend_t *rend, game_state_t *game) {
 void VK_DestroyRend(vk_rend_t *rend) {
   vkDeviceWaitIdle(rend->device);
 
-  // VK_DestroyShading(rend);
+  VK_DestroyImmediate(rend);
   VK_DestroyGBuffer(rend);
   VK_DestroyECS(rend);
+
+  for (unsigned h = 0; h < rend->assets.handle_count; h++) {
+    vmaDestroyBuffer(rend->allocator, rend->assets.handles[h].staging,
+                     rend->assets.handles[h].staging_alloc);
+
+    vkDestroyImageView(rend->device, rend->assets.handles[h].image_view, NULL);
+
+    vmaDestroyImage(rend->allocator, rend->assets.handles[h].image,
+                    rend->assets.handles[h].image_alloc);
+  }
 
   for (unsigned i = 0; i < rend->assets.texture_count; i++) {
     vmaDestroyBuffer(rend->allocator, rend->assets.textures_staging[i],
@@ -1584,9 +1597,18 @@ void VK_UploadSingleTexture(vk_rend_t *rend, texture_t *texture) {
 
   vkQueueSubmit(rend->graphics_queue, 1, &submit_info, rend->transfer_fence);
 
-  texture->handle = calloc(1, sizeof(vk_texture_handle_t));
+  if (rend->assets.handle_count >= rend->assets.handle_capacity) {
+    rend->assets.handles =
+        realloc(rend->assets.handles,
+                sizeof(vk_texture_handle_t) * 2 * rend->assets.handle_capacity);
 
-  *(vk_texture_handle_t *)texture->handle = (vk_texture_handle_t){
+    rend->assets.handle_capacity *= 2;
+  }
+
+  texture->handle = rend->assets.handle_count;
+  rend->assets.handle_count++;
+
+  rend->assets.handles[texture->handle] = (vk_texture_handle_t){
       .image = vk_image,
       .image_alloc = vk_image_alloc,
       .image_view = vk_image_view,

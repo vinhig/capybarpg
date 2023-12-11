@@ -27,7 +27,7 @@ typedef struct game_state_t {
   struct {
     float x, y, z;
     float w, h;
-    void *handle;
+    unsigned handle;
   } draws[64];
   unsigned draw_count;
 

@@ -235,8 +235,9 @@ void VK_DrawImmediate(vk_rend_t *rend, game_state_t *state) {
                     rend->immediate->pipeline);
 
   for (unsigned i = 0; i < state->draw_count; i++) {
+    vk_texture_handle_t *handle = &rend->assets.handles[state->draws[i].handle];
     // Maybe we have to create a descriptor set
-    if (!((vk_texture_handle_t *)state->draws[i].handle)->set) {
+    if (!handle->set) {
       VkDescriptorSetAllocateInfo set_info = {
           .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
           .descriptorPool = rend->descriptor_pool,
@@ -244,14 +245,11 @@ void VK_DrawImmediate(vk_rend_t *rend, game_state_t *state) {
           .pSetLayouts = &rend->immediate->immediate_layout,
       };
 
-      vkAllocateDescriptorSets(
-          rend->device, &set_info,
-          &((vk_texture_handle_t *)state->draws[i].handle)->set);
+      vkAllocateDescriptorSets(rend->device, &set_info, &handle->set);
 
       VkDescriptorImageInfo image_info = {
           .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-          .imageView =
-              ((vk_texture_handle_t *)state->draws[i].handle)->image_view,
+          .imageView = handle->image_view,
           .sampler = rend->linear_sampler,
       };
 
@@ -260,18 +258,16 @@ void VK_DrawImmediate(vk_rend_t *rend, game_state_t *state) {
           .dstBinding = 0,
           .descriptorCount = 1,
           .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-          .dstSet = ((vk_texture_handle_t *)state->draws[i].handle)->set,
-          .dstBinding = 0,
+          .dstSet = handle->set,
           .pImageInfo = &image_info,
       };
 
-      printf("vkUpdateDescriptorSets();\n");
       vkUpdateDescriptorSets(rend->device, 1, &image_write, 0, NULL);
     }
 
-    vkCmdBindDescriptorSets(
-        cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, rend->immediate->pipeline_layout,
-        0, 1, &((vk_texture_handle_t *)state->draws[i].handle)->set, 0, NULL);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            rend->immediate->pipeline_layout, 0, 1,
+                            &handle->set, 0, NULL);
 
     vec4 transform[] = {
         [0] = {state->draws[i].x, state->draws[i].y, state->draws[i].z, 0.0f},
@@ -288,4 +284,10 @@ void VK_DrawImmediate(vk_rend_t *rend, game_state_t *state) {
   vkCmdEndRendering(cmd);
 }
 
-void VK_DestroyImmediate(vk_rend_t *rend) {}
+void VK_DestroyImmediate(vk_rend_t *rend) {
+  vkDestroyPipeline(rend->device, rend->immediate->pipeline, NULL);
+  vkDestroyPipelineLayout(rend->device, rend->immediate->pipeline_layout, NULL);
+
+  vkDestroyDescriptorSetLayout(rend->device, rend->immediate->immediate_layout,
+                               NULL);
+}
