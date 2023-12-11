@@ -892,8 +892,7 @@ void VK_DestroyECS(vk_rend_t *rend) {
 
   vmaDestroyBuffer(rend->allocator, rend->ecs->i_tmp_buffer,
                    rend->ecs->i_tmp_alloc);
-  vmaDestroyBuffer(rend->allocator, rend->ecs->i_buffer,
-                   rend->ecs->i_alloc);
+  vmaDestroyBuffer(rend->allocator, rend->ecs->i_buffer, rend->ecs->i_alloc);
 
   vmaDestroyBuffer(rend->allocator, rend->ecs->s_tmp_buffer,
                    rend->ecs->s_tmp_alloc);
@@ -916,11 +915,12 @@ void VK_DestroyECS(vk_rend_t *rend) {
 void VK_TickSystems(vk_rend_t *rend) {
   // VK_Draw waits on rend->logic_fence[i]
   // VK_TickSystems waits on rend->rend_fence[i-1]
-  vkWaitForFences(rend->device, 1,
-                  &rend->rend_fence[(rend->current_frame - 1) % 3], true,
-                  1000000000);
-  vkResetFences(rend->device, 1,
-                &rend->rend_fence[(rend->current_frame - 1) % 3]);
+  if (rend->current_frame != 0) {
+    vkWaitForFences(rend->device, 1,
+                    &rend->rend_fence[(rend->current_frame - 1) % 3], true, 1000000);
+    vkResetFences(rend->device, 1,
+                  &rend->rend_fence[(rend->current_frame - 1) % 3]);
+  }
 
   VkCommandBuffer cmd = rend->compute_command_buffer[rend->current_frame % 3];
 

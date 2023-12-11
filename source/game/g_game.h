@@ -34,8 +34,60 @@ typedef struct game_state_t {
 } game_state_t;
 
 typedef struct material_t {
-  const char *name;
+  char *name;
+
+  unsigned revision;
+
+  unsigned stack_size;
+
+  unsigned low_stack_tex;
+  char *low_stack_path;
+  unsigned half_stack_tex;
+  char *half_stack_path;
+  unsigned full_stack_tex;
+  char *full_stack_path;
 } material_t;
+
+typedef struct wall_t {
+  char *name;
+
+  unsigned revision;
+
+  unsigned health;
+
+  unsigned only_left_tex;
+  char *only_left_path;
+  unsigned only_right_tex;
+  char *only_right_path;
+  unsigned only_top_tex;
+  char *only_top_path;
+  unsigned only_bottom_tex;
+  char *only_bottom_path;
+  unsigned all_tex;
+  char *all_path;
+  unsigned left_right_bottom_tex;
+  char *left_right_bottom_path;
+  unsigned left_right_tex;
+  char *left_right_path;
+  unsigned left_right_top_tex;
+  char *left_right_top_path;
+  unsigned top_bottom_tex;
+  char *top_bottom_path;
+  unsigned right_top_tex;
+  char *right_top_path;
+  unsigned left_top_tex;
+  char *left_top_path;
+  unsigned right_bottom_tex;
+  char *right_bottom_path;
+  unsigned left_bottom_tex;
+  char *left_bottom_path;
+  unsigned left_top_bottom_tex;
+  char *left_top_bottom_path;
+  unsigned right_top_bottom_tex;
+  char *right_top_bottom_path;
+  unsigned nothing_tex;
+  char *nothing_path;
+} wall_t;
 
 /// @brief Create a new game, allocating the memory for it. Read `main.toml`
 /// from the given base folder, and set it as the current scene. No assets

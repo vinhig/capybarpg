@@ -23,7 +23,8 @@
 #define CORRIDOR 1
 
 ZPL_TABLE_DECLARE(extern, material_bank_t, G_Materials_, material_t)
-ZPL_TABLE_DECLARE(extern, texture_bank_t, G_Textures_, texture_t)
+ZPL_TABLE_DECLARE(extern, texture_bank_t, G_ImmediateTextures_, texture_t)
+ZPL_TABLE_DECLARE(extern, wall_bank_t, G_Walls_, wall_t)
 
 typedef struct cpu_path_t {
   vec2 *points;
@@ -44,6 +45,13 @@ typedef struct cpu_agent_t {
 } __attribute__((aligned(16))) cpu_agent_t;
 
 typedef struct node_t node_t;
+
+typedef struct texture_job_t {
+  const char *path;
+  unsigned *dest_text;
+
+  game_t *game;
+} texture_job_t;
 
 typedef struct worker_t {
   // Hey hey, I heard QCVM wasn't thread-safe. So i just init a QCVM for each
@@ -92,7 +100,8 @@ struct game_t {
   unsigned *entities;
 
   unsigned worker_count;
-  worker_t workers[8];
+  worker_t workers[32];
+  zpl_jobs_system job_sys;
 
   char *base;
 
@@ -100,15 +109,25 @@ struct game_t {
   unsigned scene_count;
   unsigned scene_capacity;
 
+  char *next_scene;
   scene_t *current_scene;
+
+  texture_t *textures;
+  unsigned texture_count;
+  unsigned texture_capacity;
+  zpl_mutex texture_mutex;
 
   // Asset banks
   material_bank_t material_bank;
-  texture_bank_t texture_bank;
+  wall_bank_t wall_bank;
+  texture_bank_t immediate_texture_bank;
 
   // Game state, reset each frame
   // The renderer use this to draw the frame
   game_state_t state;
+
+  float last_time;
+  float delta_time;
 
   // Hello
   vk_rend_t *rend;
@@ -121,18 +140,38 @@ game_t *G_CreateGame(client_t *client, char *base) {
 
   game->cpu_agents = calloc(3000, sizeof(cpu_agent_t));
 
+  game->textures = calloc(32, sizeof(texture_t));
+  game->texture_capacity = 32;
+
   game->map = jps_create(256, 256);
   game->base = base;
 
   game->client = client;
   game->rend = CL_GetRend(client);
 
-  game->workers[0] = (worker_t){
-      .game = game,
-  };
+  zpl_affinity af;
+  zpl_affinity_init(&af);
+  // The workers[0] is actually the main thread ok?
+  game->worker_count = (af.thread_count / 2) + 1;
+  printf("[VERBOSE] We'll work with 1 + %d workers.\n", game->worker_count - 1);
+
+  zpl_jobs_init_with_limit(&game->job_sys, zpl_heap_allocator(),
+                           game->worker_count, 10000);
+
+  for (unsigned w = 0; w < game->worker_count; w++) {
+    game->workers[w] = (worker_t){
+        .game = game,
+        .id = w,
+    };
+  }
+
+  zpl_affinity_destroy(&af);
+
+  zpl_mutex_init(&game->texture_mutex);
 
   G_Materials_init(&game->material_bank, zpl_heap_allocator());
-  G_Textures_init(&game->texture_bank, zpl_heap_allocator());
+  G_ImmediateTextures_init(&game->immediate_texture_bank, zpl_heap_allocator());
+  G_Walls_init(&game->wall_bank, zpl_heap_allocator());
 
   // Add "model" system at the end, just compute the model matrix for each
   // transform
@@ -230,13 +269,15 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
             -1.0f / zoom + offset_y, 1.0f / zoom + offset_y, 0.01, 50.0,
             (vec4 *)&game->state.fps.view_proj);
 
-  struct timespec start, end;
-  clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+  game->delta_time = zpl_time_rel() - game->last_time;
+
+  game->last_time = zpl_time_rel();
 
   if (!game->current_scene) {
     printf("[WARNING] No current scene hehe...\n");
   } else {
     for (unsigned i = 0; i < game->current_scene->update_listener_count; i++) {
+      qcvm_set_parm_float(game->workers[0].qcvm, 0, game->delta_time);
       qcvm_run(game->workers[0].qcvm,
                game->current_scene->update_listeners[i].qcvm_func);
     }
@@ -249,13 +290,10 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
       }
     }
 
-    clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-
-    time_t t = (end.tv_sec - start.tv_sec) * 1000000 +
-               (end.tv_nsec - start.tv_nsec) / 1000;
-    t /= 1000;
-    if (t > 10) {
-      printf("Anormaly long update time... %ldms\n", t);
+    zpl_f64 delta =
+        (zpl_time_rel() - game->last_time) / 1000.0f; // Delta time in milliseconds
+    if (delta > 10.0f) {
+      printf("[WARNING] Anormaly long update time... %fms\n", delta);
     }
   }
 
@@ -354,13 +392,13 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
   zpl_json_object *furnitures = zpl_adt_find(&recipes, "furnitures", false);
   zpl_json_object *items = zpl_adt_find(&recipes, "items", false);
 
-  // The info extraction is a bit weird as mod can overwrite what was previously
-  // specified. So if there isn't a element of a specific type in the asset bank
-  // with that name, we create it. Otherwise, we simply update its properties
-  // (for example a mod "Stronger Walls" doesn't have to re-specify every single
-  // sprites, just the health). So the identifier is the only mandatory field.
-  // Yes I know something like Rust or Go would have been smarter than all this
-  // manual bullshit.
+  // The info extraction is a bit weird as mods can overwrite what was
+  // previously specified. So if there isn't a element of a specific type in the
+  // asset bank with that name, we create it. Otherwise, we simply update its
+  // properties (for example a mod "Stronger Walls" doesn't have to re-specify
+  // every single sprites, just the health). So the identifier is the only
+  // mandatory field. Yes I know something like Rust or Go would have been
+  // smarter than all this manual marshalling bullshit.
 
   if (materials && materials->type == ZPL_ADT_TYPE_ARRAY) {
     unsigned size = zpl_array_count(materials->nodes);
@@ -379,8 +417,11 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
         material_t *material = G_Materials_get(&game->material_bank, key);
 
         if (!material) {
-          G_Materials_set(&game->material_bank, key, (material_t){});
-          material_t *material = G_Materials_get(&game->material_bank, key);
+          G_Materials_set(&game->material_bank, key,
+                          (material_t){.revision = 1});
+          material = G_Materials_get(&game->material_bank, key);
+        } else {
+          material->revision += 1;
         }
 
         // Extract all relevant info from the JSON field
@@ -394,20 +435,279 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
 
         // Some field may be NULL if not present, we don't care
         if (name_node && name_node->type == ZPL_ADT_TYPE_STRING) {
+          if (material->name) {
+            free(material->name);
+          }
+          material->name =
+              memcpy(malloc(strlen(name_node->string)), name_node->string,
+                     strlen(name_node->string) + 1);
         }
 
         if (stack_size_node && stack_size_node->type == ZPL_ADT_TYPE_INTEGER) {
+          material->stack_size = stack_size_node->integer;
         }
 
         if (sprites_node && sprites_node->type == ZPL_ADT_TYPE_OBJECT) {
           low_stack_node = zpl_adt_find(sprites_node, "low_stack", false);
           half_stack_node = zpl_adt_find(sprites_node, "half_stack", false);
           full_stack_node = zpl_adt_find(sprites_node, "full_stack", false);
+
+          if (low_stack_node && low_stack_node->type == ZPL_ADT_TYPE_STRING) {
+            if (material->low_stack_path) {
+              free(material->low_stack_path);
+            }
+            material->low_stack_path = memcpy(
+                malloc(strlen(low_stack_node->string) + 1),
+                low_stack_node->string, strlen(low_stack_node->string) + 1);
+          }
+          if (half_stack_node && half_stack_node->type == ZPL_ADT_TYPE_STRING) {
+            if (material->half_stack_path) {
+              free(material->half_stack_path);
+            }
+            material->half_stack_path = memcpy(
+                malloc(strlen(half_stack_node->string) + 1),
+                half_stack_node->string, strlen(half_stack_node->string) + 1);
+          }
+          if (full_stack_node && full_stack_node->type == ZPL_ADT_TYPE_STRING) {
+            if (material->full_stack_path) {
+              free(material->full_stack_path);
+            }
+            material->full_stack_path = memcpy(
+                malloc(strlen(full_stack_node->string) + 1),
+                full_stack_node->string, strlen(full_stack_node->string) + 1);
+          }
         }
       }
     }
   } else {
     printf("[DEBUG] No 'materials' specified in `%s`.\n", path);
+  }
+
+  if (walls && walls->type == ZPL_ADT_TYPE_ARRAY) {
+    unsigned size = zpl_array_count(walls->nodes);
+    for (unsigned i = 0; i < size; i++) {
+      zpl_adt_node *element = &walls->nodes[i];
+      zpl_adt_node *id_node = zpl_adt_find(element, "id", false);
+
+      if (!id_node || id_node->type != ZPL_ADT_TYPE_STRING) {
+        printf("[WARNING] The element %d in the 'walls' list doesn't have "
+               "an ID (of type string).\n",
+               i);
+        continue;
+      } else {
+        zpl_u64 key = zpl_fnv64(id_node->string, strlen(id_node->string));
+        // Does the bank contains this element? If not create an empty one.
+        wall_t *wall = G_Walls_get(&game->wall_bank, key);
+
+        if (!wall) {
+          G_Walls_set(&game->wall_bank, key, (wall_t){.revision = 1});
+          wall = G_Walls_get(&game->wall_bank, key);
+        } else {
+          wall->revision += 1;
+        }
+
+        // Extract all relevant info from the JSON field
+        zpl_adt_node *name_node = zpl_adt_find(element, "name", false);
+        zpl_adt_node *health_node = zpl_adt_find(element, "health", false);
+        zpl_adt_node *sprites_node = zpl_adt_find(element, "sprites", false);
+
+        // Some field may be NULL if not present, we don't care
+        if (name_node && name_node->type == ZPL_ADT_TYPE_STRING) {
+          if (wall->name) {
+            free(wall->name);
+          }
+          wall->name = memcpy(malloc(strlen(name_node->string)),
+                              name_node->string, strlen(name_node->string) + 1);
+        }
+
+        if (health_node && health_node->type == ZPL_ADT_TYPE_INTEGER) {
+          wall->health = health_node->integer;
+        }
+
+        zpl_adt_node *only_left_node = NULL;
+        zpl_adt_node *only_right_node = NULL;
+        zpl_adt_node *only_top_node = NULL;
+        zpl_adt_node *only_bottom_node = NULL;
+        zpl_adt_node *all_node = NULL;
+        zpl_adt_node *left_right_bottom_node = NULL;
+        zpl_adt_node *left_right_node = NULL;
+        zpl_adt_node *left_right_top_node = NULL;
+        zpl_adt_node *top_bottom_node = NULL;
+        zpl_adt_node *right_top_node = NULL;
+        zpl_adt_node *left_top_node = NULL;
+        zpl_adt_node *right_bottom_node = NULL;
+        zpl_adt_node *left_bottom_node = NULL;
+        zpl_adt_node *left_top_bottom_node = NULL;
+        zpl_adt_node *right_top_bottom_node = NULL;
+        zpl_adt_node *nothing_node = NULL;
+
+        if (sprites_node && sprites_node->type == ZPL_ADT_TYPE_OBJECT) {
+          only_left_node = zpl_adt_find(sprites_node, "only_left", false);
+          only_right_node = zpl_adt_find(sprites_node, "only_right", false);
+          only_top_node = zpl_adt_find(sprites_node, "only_top", false);
+          only_bottom_node = zpl_adt_find(sprites_node, "only_bottom", false);
+          all_node = zpl_adt_find(sprites_node, "all", false);
+          left_right_bottom_node =
+              zpl_adt_find(sprites_node, "left_right_bottom", false);
+          left_right_node = zpl_adt_find(sprites_node, "left_right", false);
+          left_right_top_node =
+              zpl_adt_find(sprites_node, "left_right_top", false);
+          top_bottom_node = zpl_adt_find(sprites_node, "top_bottom", false);
+          right_top_node = zpl_adt_find(sprites_node, "right_top", false);
+          left_top_node = zpl_adt_find(sprites_node, "left_top", false);
+          right_bottom_node = zpl_adt_find(sprites_node, "right_bottom", false);
+          left_bottom_node = zpl_adt_find(sprites_node, "left_bottom", false);
+          left_top_bottom_node =
+              zpl_adt_find(sprites_node, "left_top_bottom", false);
+          right_top_bottom_node =
+              zpl_adt_find(sprites_node, "right_top_bottom", false);
+          nothing_node = zpl_adt_find(sprites_node, "nothing", false);
+
+          if (only_left_node && only_left_node->type == ZPL_ADT_TYPE_STRING) {
+            if (wall->only_left_path) {
+              free(wall->only_left_path);
+            }
+            wall->only_left_path = memcpy(
+                malloc(strlen(only_left_node->string) + 1),
+                only_left_node->string, strlen(only_left_node->string) + 1);
+          }
+          if (only_right_node && only_right_node->type == ZPL_ADT_TYPE_STRING) {
+            if (wall->only_right_path) {
+              free(wall->only_right_path);
+            }
+            wall->only_right_path = memcpy(
+                malloc(strlen(only_right_node->string) + 1),
+                only_right_node->string, strlen(only_right_node->string) + 1);
+          }
+          if (only_top_node && only_top_node->type == ZPL_ADT_TYPE_STRING) {
+            if (wall->only_top_path) {
+              free(wall->only_top_path);
+            }
+            wall->only_top_path = memcpy(
+                malloc(strlen(only_top_node->string) + 1),
+                only_top_node->string, strlen(only_top_node->string) + 1);
+          }
+          if (only_bottom_node &&
+              only_bottom_node->type == ZPL_ADT_TYPE_STRING) {
+            if (wall->only_bottom_path) {
+              free(wall->only_bottom_path);
+            }
+            wall->only_bottom_path = memcpy(
+                malloc(strlen(only_bottom_node->string) + 1),
+                only_bottom_node->string, strlen(only_bottom_node->string) + 1);
+          }
+          if (all_node && all_node->type == ZPL_ADT_TYPE_STRING) {
+            if (wall->all_path) {
+              free(wall->all_path);
+            }
+            wall->all_path =
+                memcpy(malloc(strlen(all_node->string) + 1), all_node->string,
+                       strlen(all_node->string) + 1);
+          }
+          if (left_right_bottom_node &&
+              left_right_bottom_node->type == ZPL_ADT_TYPE_STRING) {
+            if (wall->left_right_bottom_path) {
+              free(wall->left_right_bottom_path);
+            }
+            wall->left_right_bottom_path =
+                memcpy(malloc(strlen(left_right_bottom_node->string) + 1),
+                       left_right_bottom_node->string,
+                       strlen(left_right_bottom_node->string) + 1);
+          }
+          if (left_right_node && left_right_node->type == ZPL_ADT_TYPE_STRING) {
+            if (wall->left_right_path) {
+              free(wall->left_right_path);
+            }
+            wall->left_right_path = memcpy(
+                malloc(strlen(left_right_node->string) + 1),
+                left_right_node->string, strlen(left_right_node->string) + 1);
+          }
+          if (left_right_top_node &&
+              left_right_top_node->type == ZPL_ADT_TYPE_STRING) {
+            if (wall->left_right_top_path) {
+              free(wall->left_right_top_path);
+            }
+            wall->left_right_top_path =
+                memcpy(malloc(strlen(left_right_top_node->string) + 1),
+                       left_right_top_node->string,
+                       strlen(left_right_top_node->string) + 1);
+          }
+          if (top_bottom_node && top_bottom_node->type == ZPL_ADT_TYPE_STRING) {
+            if (wall->top_bottom_path) {
+              free(wall->top_bottom_path);
+            }
+            wall->top_bottom_path = memcpy(
+                malloc(strlen(top_bottom_node->string) + 1),
+                top_bottom_node->string, strlen(top_bottom_node->string) + 1);
+          }
+          if (right_top_node && right_top_node->type == ZPL_ADT_TYPE_STRING) {
+            if (wall->right_top_path) {
+              free(wall->right_top_path);
+            }
+            wall->right_top_path = memcpy(
+                malloc(strlen(right_top_node->string) + 1),
+                right_top_node->string, strlen(right_top_node->string) + 1);
+          }
+          if (left_top_node && left_top_node->type == ZPL_ADT_TYPE_STRING) {
+            if (wall->left_top_path) {
+              free(wall->left_top_path);
+            }
+            wall->left_top_path = memcpy(
+                malloc(strlen(left_top_node->string) + 1),
+                left_top_node->string, strlen(left_top_node->string) + 1);
+          }
+          if (right_bottom_node &&
+              right_bottom_node->type == ZPL_ADT_TYPE_STRING) {
+            if (wall->right_bottom_path) {
+              free(wall->right_bottom_path);
+            }
+            wall->right_bottom_path =
+                memcpy(malloc(strlen(right_bottom_node->string) + 1),
+                       right_bottom_node->string,
+                       strlen(right_bottom_node->string) + 1);
+          }
+          if (left_bottom_node &&
+              left_bottom_node->type == ZPL_ADT_TYPE_STRING) {
+            if (wall->left_bottom_path) {
+              free(wall->left_bottom_path);
+            }
+            wall->left_bottom_path = memcpy(
+                malloc(strlen(left_bottom_node->string) + 1),
+                left_bottom_node->string, strlen(left_bottom_node->string) + 1);
+          }
+          if (left_top_bottom_node &&
+              left_top_bottom_node->type == ZPL_ADT_TYPE_STRING) {
+            if (wall->left_top_bottom_path) {
+              free(wall->left_top_bottom_path);
+            }
+            wall->left_top_bottom_path =
+                memcpy(malloc(strlen(left_top_bottom_node->string) + 1),
+                       left_top_bottom_node->string,
+                       strlen(left_top_bottom_node->string) + 1);
+          }
+          if (right_top_bottom_node &&
+              right_top_bottom_node->type == ZPL_ADT_TYPE_STRING) {
+            if (wall->right_top_bottom_path) {
+              free(wall->right_top_bottom_path);
+            }
+            wall->right_top_bottom_path =
+                memcpy(malloc(strlen(right_top_bottom_node->string) + 1),
+                       right_top_bottom_node->string,
+                       strlen(right_top_bottom_node->string) + 1);
+          }
+          if (nothing_node && nothing_node->type == ZPL_ADT_TYPE_STRING) {
+            if (wall->nothing_path) {
+              free(wall->nothing_path);
+            }
+            wall->nothing_path =
+                memcpy(malloc(strlen(nothing_node->string) + 1),
+                       nothing_node->string, strlen(nothing_node->string) + 1);
+          }
+        }
+      }
+    }
+  } else {
+    printf("[DEBUG] No 'walls' specified in `%s`.\n", path);
   }
 
   zpl_json_free(&recipes);
@@ -434,12 +734,13 @@ void G_Draw_Image_Relative(game_t *game, const char *path, float w, float h,
                            float x, float y, float z) {
   // Is the image loaded?
   zpl_u64 key = zpl_fnv64(path, strlen(path));
-  texture_t *texture = G_Textures_get(&game->texture_bank, key);
+  texture_t *texture =
+      G_ImmediateTextures_get(&game->immediate_texture_bank, key);
 
   if (!texture) {
     char complete_path[256];
     sprintf(&complete_path[0], "%s/%s", game->base, path);
-    printf("[VERBOSE] G_Draw_Image_Relative(\"%s\");\n", &complete_path[0]);
+    
     texture_t t = G_LoadSingleTexture(complete_path);
 
     if (!t.data) {
@@ -449,11 +750,10 @@ void G_Draw_Image_Relative(game_t *game, const char *path, float w, float h,
 
       return;
     } else {
-      G_Textures_set(&game->texture_bank, key, t);
-      texture = G_Textures_get(&game->texture_bank, key);
+      G_ImmediateTextures_set(&game->immediate_texture_bank, key, t);
+      texture = G_ImmediateTextures_get(&game->immediate_texture_bank, key);
 
       VK_UploadSingleTexture(game->rend, texture);
-
     }
   }
 
@@ -489,7 +789,7 @@ void G_Run_Scene(worker_t *worker, const char *scene_name) {
   game_t *game = worker->game;
 
   // Fetch the scene with this name
-  scene_t *scene;
+  scene_t *scene = NULL;
   for (unsigned i = 0; i < game->scene_count; i++) {
     if (strcmp(game->scenes[i].name, scene_name) == 0) {
       scene = &game->scenes[i];
@@ -529,12 +829,222 @@ void G_Run_Scene_QC(qcvm_t *qcvm) {
   G_Run_Scene(worker, scene_name);
 }
 
+static zpl_atomic32 oh_no_no_no;
+
+void G_WorkerLoadTexture(void *data) {
+  texture_job_t *the_job = data;
+  game_t *game = the_job->game;
+
+  char the_path[256];
+  sprintf(&the_path[0], "%s/%s", game->base, the_job->path);
+
+  texture_t tex = G_LoadSingleTexture(the_path);
+
+  if (!tex.data) {
+    printf("[ERROR] Couldn't load texture `%s` | `%s` (in a worker thread).\n",
+           the_job->path, the_path);
+    return;
+  }
+
+  zpl_mutex_lock(&game->texture_mutex);
+  if (game->texture_count == game->texture_capacity) {
+    game->texture_capacity *= 2;
+    game->textures =
+        realloc(game->textures, game->texture_capacity * sizeof(texture_t));
+  }
+  game->textures[game->texture_count] = tex;
+  game->texture_count++;
+  
+  zpl_mutex_unlock(&game->texture_mutex);
+
+  zpl_sleep_ms(512);
+}
+
+void G_Load_Game(worker_t *worker) {
+  game_t *game = worker->game;
+
+  zpl_atomic32_store(&oh_no_no_no, 0);
+
+  texture_job_t *texture_jobs =
+      calloc(zpl_array_count(game->material_bank.entries) * 3 +
+                 zpl_array_count(game->wall_bank.entries) * 16,
+             sizeof(texture_job_t));
+
+  for (unsigned i = 0; i < zpl_array_count(game->material_bank.entries); i++) {
+    material_bank_tEntry *entry = &game->material_bank.entries[i];
+    material_t *mat = &entry->value;
+
+    texture_job_t *low_stack_job = &texture_jobs[i * 3 + 0];
+    *low_stack_job = (texture_job_t){
+        .game = game,
+        .dest_text = &mat->low_stack_tex,
+        .path = mat->low_stack_path,
+    };
+    texture_job_t *half_stack_job = &texture_jobs[i * 3 + 1];
+    *half_stack_job = (texture_job_t){
+        .game = game,
+        .dest_text = &mat->half_stack_tex,
+        .path = mat->half_stack_path,
+    };
+    texture_job_t *full_stack_job = &texture_jobs[i * 3 + 2];
+    *full_stack_job = (texture_job_t){
+        .game = game,
+        .dest_text = &mat->full_stack_tex,
+        .path = mat->full_stack_path,
+    };
+
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, low_stack_job);
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, half_stack_job);
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, full_stack_job);
+  }
+
+  unsigned offset = zpl_array_count(game->material_bank.entries) * 3;
+
+  for (unsigned i = 0; i < zpl_array_count(game->wall_bank.entries); i++) {
+    wall_bank_tEntry *entry = &game->wall_bank.entries[i];
+    wall_t *wall = &entry->value;
+
+    texture_job_t *only_left_job = &texture_jobs[offset + i * 16 + 0];
+    *only_left_job = (texture_job_t){
+        .game = game,
+        .dest_text = &wall->only_left_tex,
+        .path = wall->only_left_path,
+    };
+    texture_job_t *only_right_job = &texture_jobs[offset + i * 16 + 1];
+    *only_right_job = (texture_job_t){
+        .game = game,
+        .dest_text = &wall->only_right_tex,
+        .path = wall->only_right_path,
+    };
+    texture_job_t *only_top_job = &texture_jobs[offset + i * 16 + 2];
+    *only_top_job = (texture_job_t){
+        .game = game,
+        .dest_text = &wall->only_top_tex,
+        .path = wall->only_top_path,
+    };
+    texture_job_t *only_bottom_job = &texture_jobs[offset + i * 16 + 3];
+    *only_bottom_job = (texture_job_t){
+        .game = game,
+        .dest_text = &wall->only_bottom_tex,
+        .path = wall->only_bottom_path,
+    };
+    texture_job_t *all_job = &texture_jobs[offset + i * 16 + 4];
+    *all_job = (texture_job_t){
+        .game = game,
+        .dest_text = &wall->all_tex,
+        .path = wall->all_path,
+    };
+    texture_job_t *left_right_bottom_job = &texture_jobs[offset + i * 16 + 5];
+    *left_right_bottom_job = (texture_job_t){
+        .game = game,
+        .dest_text = &wall->left_right_bottom_tex,
+        .path = wall->left_right_bottom_path,
+    };
+    texture_job_t *left_right_job = &texture_jobs[offset + i * 16 + 6];
+    *left_right_job = (texture_job_t){
+        .game = game,
+        .dest_text = &wall->left_right_tex,
+        .path = wall->left_right_path,
+    };
+    texture_job_t *left_right_top_job = &texture_jobs[offset + i * 16 + 7];
+    *left_right_top_job = (texture_job_t){
+        .game = game,
+        .dest_text = &wall->left_right_top_tex,
+        .path = wall->left_right_top_path,
+    };
+    texture_job_t *top_bottom_job = &texture_jobs[offset + i * 16 + 8];
+    *top_bottom_job = (texture_job_t){
+        .game = game,
+        .dest_text = &wall->top_bottom_tex,
+        .path = wall->top_bottom_path,
+    };
+    texture_job_t *right_top_job = &texture_jobs[offset + i * 16 + 9];
+    *right_top_job = (texture_job_t){
+        .game = game,
+        .dest_text = &wall->right_top_tex,
+        .path = wall->right_top_path,
+    };
+    texture_job_t *left_top_job = &texture_jobs[offset + i * 16 + 10];
+    *left_top_job = (texture_job_t){
+        .game = game,
+        .dest_text = &wall->left_top_tex,
+        .path = wall->left_top_path,
+    };
+    texture_job_t *right_bottom_job = &texture_jobs[offset + i * 16 + 11];
+    *right_bottom_job = (texture_job_t){
+        .game = game,
+        .dest_text = &wall->right_bottom_tex,
+        .path = wall->right_bottom_path,
+    };
+    texture_job_t *left_bottom_job = &texture_jobs[offset + i * 16 + 12];
+    *left_bottom_job = (texture_job_t){
+        .game = game,
+        .dest_text = &wall->left_bottom_tex,
+        .path = wall->left_bottom_path,
+    };
+    texture_job_t *left_top_bottom_job = &texture_jobs[offset + i * 16 + 13];
+    *left_top_bottom_job = (texture_job_t){
+        .game = game,
+        .dest_text = &wall->left_top_bottom_tex,
+        .path = wall->left_top_bottom_path,
+    };
+    texture_job_t *right_top_bottom_job = &texture_jobs[offset + i * 16 + 14];
+    *right_top_bottom_job = (texture_job_t){
+        .game = game,
+        .dest_text = &wall->right_top_bottom_tex,
+        .path = wall->right_top_bottom_path,
+    };
+    texture_job_t *nothing_job = &texture_jobs[offset + i * 16 + 15];
+    *nothing_job = (texture_job_t){
+        .game = game,
+        .dest_text = &wall->nothing_tex,
+        .path = wall->nothing_path,
+    };
+
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, only_left_job);
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, only_right_job);
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, only_top_job);
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, only_bottom_job);
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, all_job);
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture,
+                     left_right_bottom_job);
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, left_right_job);
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, left_right_top_job);
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, top_bottom_job);
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, right_top_job);
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, left_top_job);
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, right_bottom_job);
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, left_bottom_job);
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, left_top_bottom_job);
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, right_top_bottom_job);
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, nothing_job);
+  }
+
+  while (!zpl_jobs_done(&game->job_sys)) {
+    zpl_jobs_process(&game->job_sys);
+
+    // Process one frame here
+    zpl_sleep_ms(2);
+
+    game_state_t state = G_TickGame(game->client, game);
+
+    CL_DrawClient(game->client, &state);
+  }
+
+  G_Run_Scene(worker, game->next_scene);
+
+  free(game->next_scene);
+  game->next_scene = NULL;
+
+  free(texture_jobs);
+}
+
 void G_Load_Game_QC(qcvm_t *qcvm) {
   worker_t *worker = (worker_t *)qcvm_get_user_data(qcvm);
   game_t *game = worker->game;
 
   const char *loading_scene_name = qcvm_get_parm_string(qcvm, 0);
-  const char *next_scene = qcvm_get_parm_string(qcvm, 0);
+  const char *next_scene = qcvm_get_parm_string(qcvm, 1);
 
   if (worker->id != 0) {
     printf(
@@ -542,7 +1052,14 @@ void G_Load_Game_QC(qcvm_t *qcvm) {
     return;
   }
 
+  printf("next_scene will be %s\n", next_scene);
+
+  game->next_scene = memcpy(malloc(strlen(next_scene) + 1), next_scene,
+                            strlen(next_scene) + 1);
+
   G_Run_Scene(worker, loading_scene_name);
+
+  G_Load_Game(worker);
 }
 
 const char *G_Get_Last_Asset_Loaded(game_t *game) {
@@ -788,8 +1305,6 @@ void G_Install_QCVM(worker_t *worker) {
 }
 
 bool G_Load(client_t *client, game_t *game) {
-  // TODO: should find a way to correctly guess the number of workers
-  game->worker_count = 8;
 
   game->cpu_agents = calloc(3000, sizeof(cpu_agent_t));
   time_t seed = time(NULL);
