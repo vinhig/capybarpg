@@ -31,10 +31,6 @@ void CL_GetViewDim(client_t *client, unsigned *width, unsigned *height);
 
 void CL_UpdateClient(client_t *client);
 
-void CL_PushLoadingScreen(client_t *client);
-
-void CL_PopLoadingScreen(client_t *client);
-
 void CL_DrawClient(client_t *client, game_state_t* state);
 
 void CL_DestroyClient(client_t *client);

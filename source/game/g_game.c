@@ -53,6 +53,16 @@ typedef struct texture_job_t {
   game_t *game;
 } texture_job_t;
 
+typedef struct map_t {
+  struct map *jps_map;
+  zpl_mutex mutex;
+
+  unsigned w;
+  unsigned h;
+
+  struct Tile *gpu_tiles;
+} map_t;
+
 typedef struct worker_t {
   // Hey hey, I heard QCVM wasn't thread-safe. So i just init a QCVM for each
   // worker thread. Hope you don't mind!
@@ -60,6 +70,8 @@ typedef struct worker_t {
 
   unsigned id;
   game_t *game;
+
+  map_t maps[16];
 } worker_t;
 
 typedef enum listener_type_t {
@@ -84,18 +96,19 @@ typedef struct scene_t {
 
   listener_t end_listeners[16];
   unsigned end_listener_count;
+
+  zpl_mutex scene_mutex;
+  int current_map;
 } scene_t;
 
 struct game_t {
   vk_system_t *model_matrix_sys;
   vk_system_t *path_finding_sys;
 
-  struct map *map;
-
   cpu_agent_t *cpu_agents;
   struct Agent *gpu_agents;
   struct Transform *transforms;
-  struct Tile *gpu_tiles;
+
   unsigned entity_count;
   unsigned *entities;
 
@@ -116,6 +129,9 @@ struct game_t {
   unsigned texture_count;
   unsigned texture_capacity;
   zpl_mutex texture_mutex;
+
+  zpl_mutex global_map_mutex;
+  unsigned map_count;
 
   // Asset banks
   material_bank_t material_bank;
@@ -143,7 +159,6 @@ game_t *G_CreateGame(client_t *client, char *base) {
   game->textures = calloc(32, sizeof(texture_t));
   game->texture_capacity = 32;
 
-  game->map = jps_create(256, 256);
   game->base = base;
 
   game->client = client;
@@ -188,68 +203,68 @@ void G_DestroyGame(game_t *game) {
   free(game);
 }
 
-void G_UpdateAgents(game_t *game, unsigned i) {
-  if (game->cpu_agents[i].state == AGENT_PATH_FINDING) {
-    // G_PathFinding(&game->workers[0], i);
-    jps_set_start(game->map, game->transforms[i].position[0],
-                  game->transforms[i].position[1]);
-    jps_set_end(game->map, game->cpu_agents[i].target[0],
-                game->cpu_agents[i].target[1]);
+// void G_UpdateAgents(game_t *game, unsigned i) {
+//   if (game->cpu_agents[i].state == AGENT_PATH_FINDING) {
+//     // G_PathFinding(&game->workers[0], i);
+//     jps_set_start(game->map, game->transforms[i].position[0],
+//                   game->transforms[i].position[1]);
+//     jps_set_end(game->map, game->cpu_agents[i].target[0],
+//                 game->cpu_agents[i].target[1]);
 
-    IntList *list = il_create(2);
-    jps_path_finding(game->map, 2, list);
+//     IntList *list = il_create(2);
+//     jps_path_finding(game->map, 2, list);
 
-    unsigned size = il_size(list);
+//     unsigned size = il_size(list);
 
-    game->cpu_agents[i].computed_path.count = size;
-    game->cpu_agents[i].computed_path.current = 0;
-    game->cpu_agents[i].computed_path.points = calloc(size, sizeof(vec2));
-    for (unsigned p = 0; p < size; p++) {
-      int x = il_get(list, (size - p - 1), 0);
-      int y = il_get(list, (size - p - 1), 1);
-      game->cpu_agents[i].computed_path.points[p][0] = x;
-      game->cpu_agents[i].computed_path.points[p][1] = y;
-    }
+//     game->cpu_agents[i].computed_path.count = size;
+//     game->cpu_agents[i].computed_path.current = 0;
+//     game->cpu_agents[i].computed_path.points = calloc(size, sizeof(vec2));
+//     for (unsigned p = 0; p < size; p++) {
+//       int x = il_get(list, (size - p - 1), 0);
+//       int y = il_get(list, (size - p - 1), 1);
+//       game->cpu_agents[i].computed_path.points[p][0] = x;
+//       game->cpu_agents[i].computed_path.points[p][1] = y;
+//     }
 
-    game->cpu_agents[i].state = AGENT_MOVING;
-  } else if (game->cpu_agents[i].state == AGENT_MOVING) {
-    unsigned c = game->cpu_agents[i].computed_path.current;
-    if (c < game->cpu_agents[i].computed_path.count) {
-      // Compute the direction to take
-      vec2 next_pos;
-      glm_vec2(game->cpu_agents[i].computed_path.points[c], next_pos);
-      vec2 d;
-      glm_vec2_sub(next_pos, game->transforms[i].position, d);
-      vec2 s;
-      glm_vec2_sign(d, s);
-      d[0] = glm_min(fabs(d[0]), game->cpu_agents[i].speed) * s[0];
-      d[1] = glm_min(fabs(d[1]), game->cpu_agents[i].speed) * s[1];
+//     game->cpu_agents[i].state = AGENT_MOVING;
+//   } else if (game->cpu_agents[i].state == AGENT_MOVING) {
+//     unsigned c = game->cpu_agents[i].computed_path.current;
+//     if (c < game->cpu_agents[i].computed_path.count) {
+//       // Compute the direction to take
+//       vec2 next_pos;
+//       glm_vec2(game->cpu_agents[i].computed_path.points[c], next_pos);
+//       vec2 d;
+//       glm_vec2_sub(next_pos, game->transforms[i].position, d);
+//       vec2 s;
+//       glm_vec2_sign(d, s);
+//       d[0] = glm_min(fabs(d[0]), game->cpu_agents[i].speed) * s[0];
+//       d[1] = glm_min(fabs(d[1]), game->cpu_agents[i].speed) * s[1];
 
-      // Reflect the direction on the related GPU agent
-      // Visual and Animation is supposed to change
-      vec2 supposed_d = {
-          1.0f * s[0],
-          1.0f * s[1],
-      };
-      if (supposed_d[0] != 0.0f || supposed_d[1] != 0.0f) {
-        game->gpu_agents[i].direction[0] = supposed_d[0];
-        game->gpu_agents[i].direction[1] = supposed_d[1];
-      }
+//       // Reflect the direction on the related GPU agent
+//       // Visual and Animation is supposed to change
+//       vec2 supposed_d = {
+//           1.0f * s[0],
+//           1.0f * s[1],
+//       };
+//       if (supposed_d[0] != 0.0f || supposed_d[1] != 0.0f) {
+//         game->gpu_agents[i].direction[0] = supposed_d[0];
+//         game->gpu_agents[i].direction[1] = supposed_d[1];
+//       }
 
-      // Apply the movement
-      glm_vec2_add(game->transforms[i].position, d,
-                   game->transforms[i].position);
-      if (game->transforms[i].position[0] == next_pos[0] &&
-          game->transforms[i].position[1] == next_pos[1]) {
-        game->cpu_agents[i].computed_path.current++;
-      }
-    } else {
-      game->cpu_agents[i].state = AGENT_NOTHING;
-      game->gpu_agents[i].direction[0] = 0.0f;
-      game->gpu_agents[i].direction[1] = 0.0f;
-    }
-  }
-}
+//       // Apply the movement
+//       glm_vec2_add(game->transforms[i].position, d,
+//                    game->transforms[i].position);
+//       if (game->transforms[i].position[0] == next_pos[0] &&
+//           game->transforms[i].position[1] == next_pos[1]) {
+//         game->cpu_agents[i].computed_path.current++;
+//       }
+//     } else {
+//       game->cpu_agents[i].state = AGENT_NOTHING;
+//       game->gpu_agents[i].direction[0] = 0.0f;
+//       game->gpu_agents[i].direction[1] = 0.0f;
+//     }
+//   }
+// }
 
 void G_ResetGameState(game_t *game) { game->state = (game_state_t){}; }
 
@@ -286,12 +301,12 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
       unsigned signature = game->entities[i];
 
       if (signature & agent_signature) {
-        G_UpdateAgents(game, i);
+        // G_UpdateAgents(game, i);
       }
     }
 
-    zpl_f64 delta =
-        (zpl_time_rel() - game->last_time) / 1000.0f; // Delta time in milliseconds
+    zpl_f64 delta = (zpl_time_rel() - game->last_time) /
+                    1000.0f; // Delta time in milliseconds
     if (delta > 10.0f) {
       printf("[WARNING] Anormaly long update time... %fms\n", delta);
     }
@@ -316,7 +331,39 @@ texture_t G_LoadSingleTexture(const char *path) {
   };
 }
 
-int G_Create_Map(game_t *game, unsigned w, unsigned h) { return -1; }
+int G_Create_Map(game_t *game, unsigned w, unsigned h) {
+  if (game->map_count == 16) {
+    printf(
+        "[ERROR] Max number of map reached (16), who needs that much map???\n");
+    return -1;
+  }
+
+  VK_CreateMap(game->rend, w, h, game->map_count);
+
+  // Init the same map accross all workers
+  for (unsigned i = 0; i < game->worker_count; i++) {
+    map_t *the_map = &game->workers[i].maps[game->map_count];
+    zpl_mutex_lock(&the_map->mutex);
+    the_map->jps_map = jps_create(256, 256);
+    the_map->w = w;
+    the_map->h = h;
+    the_map->gpu_tiles = VK_GetMap(game->rend, game->map_count);
+
+    // Set every single tile to be the default PINK texture (texture == 0)
+    // And not sure if the mapped data from the renderer is actually zeroed
+    memset(the_map->gpu_tiles, 0, w * h * sizeof(struct Tile));
+    zpl_mutex_unlock(&the_map->mutex);
+  }
+
+  if (game->current_scene->current_map == -1) {
+    game->current_scene->current_map = game->map_count;
+  }
+
+  int map = game->map_count;
+  game->map_count++;
+
+  return map;
+}
 
 void G_Create_Map_QC(qcvm_t *qcvm) {
   worker_t *worker = (worker_t *)qcvm_get_user_data(qcvm);
@@ -348,6 +395,46 @@ void G_Create_Map_QC(qcvm_t *qcvm) {
   }
 
   qcvm_return_int(qcvm, G_Create_Map(game, w, h));
+}
+
+void G_Set_Current_Map_QC(qcvm_t *qcvm) {
+  worker_t *worker = qcvm_get_user_data(qcvm);
+  game_t *game = worker->game;
+
+  const char *scene_name = qcvm_get_parm_string(qcvm, 0);
+  int map = qcvm_get_parm_int(qcvm, 1);
+
+  if (map < 0 || map >= (int)game->map_count) {
+    printf("[ERROR] Assertion G_Set_Current_Map_QC(map >= 0 || map < "
+           "game->map_count) "
+           "[map = %d, map_count = %d] should be "
+           "verified.\n",
+           map, game->map_count);
+    return;
+  }
+
+  scene_t *scene = NULL;
+
+  for (unsigned i = 0; i < game->scene_count; i++) {
+    scene_t *the_scene = &game->scenes[i];
+    if (strcmp(scene_name, the_scene->name) == 0) {
+      scene = the_scene;
+    }
+  }
+
+  if (!scene) {
+    printf("[ERROR] Assertion G_Set_Current_Map_QC(map exists) [map = \"%s\"] "
+           "should be verified.\n",
+           scene_name);
+    return;
+  }
+
+  zpl_mutex_lock(&game->global_map_mutex);
+  zpl_mutex_lock(&scene->scene_mutex);
+  scene->current_map = map;
+  VK_SetCurrentMap(game->rend, map);
+  zpl_mutex_unlock(&scene->scene_mutex);
+  zpl_mutex_unlock(&game->global_map_mutex);
 }
 
 bool G_Add_Recipes(game_t *game, const char *path, bool required) {
@@ -740,7 +827,7 @@ void G_Draw_Image_Relative(game_t *game, const char *path, float w, float h,
   if (!texture) {
     char complete_path[256];
     sprintf(&complete_path[0], "%s/%s", game->base, path);
-    
+
     texture_t t = G_LoadSingleTexture(complete_path);
 
     if (!t.data) {
@@ -784,6 +871,10 @@ void G_Draw_Image_Relative_QC(qcvm_t *qcvm) {
   G_Draw_Image_Relative(game, path, w, h, x, y, z);
 }
 
+// TODO: G_Prepare_Scene have to be called before calling G_Run_Scene.
+// G_Run_Scene only set the current_scene to be the specified scene. It allows
+// calling an running the start listener while the previous scene still run (for
+// example, to let the loading animation be performed).
 void G_Run_Scene(worker_t *worker, const char *scene_name) {
   printf("G_Run_Scene(\"%s\");\n", scene_name);
   game_t *game = worker->game;
@@ -829,8 +920,6 @@ void G_Run_Scene_QC(qcvm_t *qcvm) {
   G_Run_Scene(worker, scene_name);
 }
 
-static zpl_atomic32 oh_no_no_no;
-
 void G_WorkerLoadTexture(void *data) {
   texture_job_t *the_job = data;
   game_t *game = the_job->game;
@@ -854,16 +943,14 @@ void G_WorkerLoadTexture(void *data) {
   }
   game->textures[game->texture_count] = tex;
   game->texture_count++;
-  
-  zpl_mutex_unlock(&game->texture_mutex);
 
-  zpl_sleep_ms(512);
+  zpl_mutex_unlock(&game->texture_mutex);
 }
 
 void G_Load_Game(worker_t *worker) {
   game_t *game = worker->game;
 
-  zpl_atomic32_store(&oh_no_no_no, 0);
+  zpl_f64 now = zpl_time_rel();
 
   texture_job_t *texture_jobs =
       calloc(zpl_array_count(game->material_bank.entries) * 3 +
@@ -1023,13 +1110,13 @@ void G_Load_Game(worker_t *worker) {
   while (!zpl_jobs_done(&game->job_sys)) {
     zpl_jobs_process(&game->job_sys);
 
-    // Process one frame here
-    zpl_sleep_ms(2);
-
     game_state_t state = G_TickGame(game->client, game);
 
     CL_DrawClient(game->client, &state);
   }
+
+  printf("[VERBOSE] Loading game took `%f` ms\n",
+         (float)(zpl_time_rel() - now));
 
   G_Run_Scene(worker, game->next_scene);
 
@@ -1072,9 +1159,74 @@ void G_Get_Last_Asset_Loaded_QC(qcvm_t *qcvm) {
   qcvm_return_string(qcvm, G_Get_Last_Asset_Loaded(game));
 }
 
-void G_Add_Wall(game_t *game, int x, int y, const char *recipe) {}
+void G_Add_Wall(game_t *game, int map, int x, int y, float health,
+                const char *recipe) {
+  // Since JPS isn't multithread friendly, we maintain a copy in each worker. It
+  // forces us to lock and make the modification multiple times. We lock them
+  // all to be sure there is not bad surprise.
+  for (unsigned i = 0; i < game->worker_count; i++) {
+    zpl_mutex_lock(&game->workers[i].maps[map].mutex);
+  }
 
-void G_Add_Wall_QC(qcvm_t *qcvm) {}
+  for (unsigned i = 0; i < game->worker_count; i++) {
+    jps_set_obstacle(game->workers[i].maps[map].jps_map, x, y, 1);
+  }
+
+  for (unsigned i = 0; i < game->worker_count; i++) {
+    zpl_mutex_unlock(&game->workers[i].maps[map].mutex);
+  }
+}
+
+void G_Add_Wall_QC(qcvm_t *qcvm) {
+  worker_t *worker = qcvm_get_user_data(qcvm);
+  game_t *game = (game_t *)worker->game;
+  const char *recipe = qcvm_get_parm_string(qcvm, 0);
+  float x = qcvm_get_parm_float(qcvm, 1);
+  float y = qcvm_get_parm_float(qcvm, 2);
+
+  float health = qcvm_get_parm_float(qcvm, 3);
+  bool to_build = qcvm_get_parm_int(qcvm, 4); // Ignored for the time being
+  int map = qcvm_get_parm_int(qcvm, 4);
+  zpl_unused(to_build);
+
+  if (health <= 0.0f) {
+    printf("[ERROR] Assertion G_Add_Wall_QC(health > 0.0) [health = %f] should "
+           "be verified.\n",
+           health);
+    return;
+  }
+  if (x < 0.0f) {
+    printf("[ERROR] Assertion G_Add_Wall_QC(x > 0.0) [x = %f] should be "
+           "verified.\n",
+           x);
+    return;
+  }
+  if (y < 0.0f) {
+    printf("[ERROR] Assertion G_Add_Wall_QC(x > 0.0) [y = %f] should be "
+           "verified.\n",
+           y);
+    return;
+  }
+  if (map < 0 || map >= (int)game->map_count) {
+    printf("[ERROR] Assertion G_Add_Wall_QC(map >= 0 || map < game->map_count) "
+           "[map = %d, map_count = %d] should be "
+           "verified.\n",
+           map, game->map_count);
+    return;
+  }
+
+  zpl_u64 key = zpl_fnv64(recipe, strlen(recipe));
+  wall_t *w = G_Walls_get(&game->wall_bank, key);
+
+  if (!w) {
+    printf("[ERROR] Assertion G_Add_Wall_QC(recipe exists) [recipe = \"%s\"] "
+           "should be verified.\n",
+           recipe);
+    return;
+  }
+
+  G_Add_Wall(game, map, x, y, health, recipe);
+}
 
 void G_Add_Scene(game_t *game, const char *name) {
   if (game->scene_capacity == 0) {
@@ -1090,6 +1242,8 @@ void G_Add_Scene(game_t *game, const char *name) {
 
   game->scenes[game->scene_count].name =
       memcpy(malloc(strlen(name) + 1), name, strlen(name) + 1);
+  game->scenes[game->scene_count].current_map = -1;
+  zpl_mutex_init(&game->scenes[game->scene_count].scene_mutex);
   game->scene_count++;
 }
 
@@ -1264,12 +1418,13 @@ void G_Install_QCVM(worker_t *worker) {
   qcvm_export_t export_G_Add_Wall = {
       .func = G_Add_Wall_QC,
       .name = "G_Add_Wall",
-      .argc = 5,
+      .argc = 6,
       .args[0] = {.name = "recipe", .type = QCVM_STRING},
       .args[1] = {.name = "x", .type = QCVM_FLOAT},
       .args[2] = {.name = "y", .type = QCVM_FLOAT},
       .args[3] = {.name = "health", .type = QCVM_FLOAT},
       .args[4] = {.name = "to_build", .type = QCVM_INT},
+      .args[5] = {.name = "map", .type = QCVM_INT},
   };
 
   qcvm_export_t export_G_Add_Listener = {
@@ -1293,6 +1448,14 @@ void G_Install_QCVM(worker_t *worker) {
       .args[5] = {.name = "z", .type = QCVM_FLOAT},
   };
 
+  qcvm_export_t export_G_Set_Current_Map = {
+      .func = G_Set_Current_Map_QC,
+      .name = "G_Set_Current_Map",
+      .argc = 2,
+      .args[0] = {.name = "scene", .type = QCVM_STRING},
+      .args[1] = {.name = "map", .type = QCVM_INT},
+  };
+
   qcvm_add_export(worker->qcvm, &export_G_Add_Recipes);
   qcvm_add_export(worker->qcvm, &export_G_Load_Game);
   qcvm_add_export(worker->qcvm, &export_G_Get_Last_Asset_Loaded);
@@ -1302,6 +1465,7 @@ void G_Install_QCVM(worker_t *worker) {
   qcvm_add_export(worker->qcvm, &export_G_Add_Wall);
   qcvm_add_export(worker->qcvm, &export_G_Add_Listener);
   qcvm_add_export(worker->qcvm, &export_G_Draw_Image_Relative);
+  qcvm_add_export(worker->qcvm, &export_G_Set_Current_Map);
 }
 
 bool G_Load(client_t *client, game_t *game) {
@@ -1352,7 +1516,7 @@ bool G_Load(client_t *client, game_t *game) {
   // Get the mapped data from the renderer
   game->gpu_agents = VK_GetAgents(game->rend);
   game->transforms = VK_GetTransforms(game->rend);
-  game->gpu_tiles = VK_GetMap(game->rend);
+
   game->entities = VK_GetEntities(game->rend);
 
   return true;

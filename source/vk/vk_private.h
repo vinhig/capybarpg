@@ -34,6 +34,16 @@ struct vk_system_t {
   VkPipeline pipeline;
 };
 
+typedef struct vk_map_t {
+  VkBuffer buffer;
+  VmaAllocation alloc;
+  VkBuffer tmp_buffer;
+  VmaAllocation tmp_alloc;
+  void *mapped_data;
+
+  unsigned w, h;
+} vk_map_t;
+
 typedef struct vk_ecs_t {
   VkDescriptorSetLayout instance_layout;
   VkDescriptorSet instance_set;
@@ -41,11 +51,9 @@ typedef struct vk_ecs_t {
   VkDescriptorSetLayout ecs_layout;
   VkDescriptorSet ecs_set;
 
-  VkBuffer map_buffer;
-  VmaAllocation map_alloc;
-  VkBuffer map_tmp_buffer;
-  VmaAllocation map_tmp_alloc;
-  void *map;
+  vk_map_t maps[16];
+  unsigned map_count;
+  unsigned current_map;
 
   VkBuffer e_buffer;
   VmaAllocation e_alloc;

@@ -39,13 +39,11 @@ int main(int argc, char **argv) {
     return -1;
   }
 
-  CL_PushLoadingScreen(client);
   if (!G_Load(client, game)) {
     printf("Couldn't load the main scene. Check error log for details.\n");
     CL_DestroyClient(client);
     return -1;
   }
-  CL_PopLoadingScreen(client);
 
   game_state_t state;
   unsigned frame = 0;

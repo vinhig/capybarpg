@@ -140,7 +140,7 @@ void VK_TransitionDepthTexture(VkCommandBuffer cmd, VkImage image,
 const char *vk_instance_layers[] = {
     "VK_LAYER_KHRONOS_validation",
 };
-const unsigned vk_instance_layer_count = 0;
+const unsigned vk_instance_layer_count = 1;
 
 const char *vk_instance_extensions[] = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME};
 const unsigned vk_instance_extension_count = 1;
@@ -487,8 +487,21 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
         .samplerAnisotropy = VK_TRUE,
     };
 
+    VkPhysicalDeviceRobustness2FeaturesEXT robustness = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
+        .nullDescriptor = true,
+        .pNext = &vulkan
+    };
+
+
+    VkPhysicalDeviceFeatures2 yeah = {
+      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+      .pNext = &robustness,
+    };
+
     VkPhysicalDeviceVulkan11Features vulkan_11 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+        .pNext = &yeah,
     };
 
     VkPhysicalDeviceVulkan12Features vulkan_12 = {
@@ -516,7 +529,7 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
         .pNext = &vulkan_13,
         .enabledExtensionCount = vk_device_extension_count,
         .ppEnabledExtensionNames = vk_device_extensions,
-        .pEnabledFeatures = &vulkan,
+        // .pEnabledFeatures = &vulkan,
     };
 
     for (unsigned j = 0; j < vk_device_extension_count; j++) {
@@ -1620,7 +1633,5 @@ void VK_UploadSingleTexture(vk_rend_t *rend, texture_t *texture) {
 void *VK_GetAgents(vk_rend_t *rend) { return rend->ecs->agents; }
 
 void *VK_GetTransforms(vk_rend_t *rend) { return rend->ecs->transforms; }
-
-void *VK_GetMap(vk_rend_t *rend) { return rend->ecs->map; }
 
 void *VK_GetEntities(vk_rend_t *rend) { return rend->ecs->entities; }

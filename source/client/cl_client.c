@@ -225,10 +225,6 @@ void CL_DrawClient(client_t *client, game_state_t *state) {
   VK_Draw(client->rend, state);
 }
 
-void CL_PushLoadingScreen(client_t *client) {}
-
-void CL_PopLoadingScreen(client_t *client) {}
-
 void CL_DestroyClient(client_t *client) {
   VK_DestroyRend(client->rend);
   SDL_DestroyWindow(client->window);
