@@ -502,11 +502,30 @@ bool VK_InitECS(vk_rend_t *rend, unsigned count) {
         sprites, agents,   immovables,
     };
 
+    VkDescriptorBindingFlags bindless_flags[] = {
+        VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
+        VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
+        VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
+        VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
+        VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
+        VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,
+        VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT};
+
+    VkDescriptorSetLayoutBindingFlagsCreateInfo extended_info = {
+        .sType =
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
+        .bindingCount = 7,
+        .pBindingFlags = &bindless_flags[0],
+    };
+
     VkDescriptorSetLayoutCreateInfo layout_info = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
         .bindingCount = sizeof(bindings) / sizeof(VkDescriptorSetLayoutBinding),
         .pBindings = &bindings[0],
+        .flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
     };
+
+    layout_info.pNext = &extended_info;
 
     if (vkCreateDescriptorSetLayout(rend->device, &layout_info, NULL,
                                     &rend->ecs->ecs_layout) != VK_SUCCESS) {
@@ -878,6 +897,13 @@ void VK_TickSystems(vk_rend_t *rend) {
                  sizeof(struct Transform) * rend->ecs->max_entities);
   VK_AddWriteECS(rend, rend->ecs->a_tmp_buffer, rend->ecs->a_buffer, 0,
                  sizeof(struct Agent) * rend->ecs->max_entities);
+  if (rend->ecs->maps[rend->ecs->current_map].mapped_data != NULL) {
+    size_t map_size = sizeof(struct Tile) *
+                      rend->ecs->maps[rend->ecs->current_map].h *
+                      rend->ecs->maps[rend->ecs->current_map].w;
+    VK_AddWriteECS(rend, rend->ecs->maps[rend->ecs->current_map].tmp_buffer,
+                   rend->ecs->maps[rend->ecs->current_map].buffer, 0, map_size);
+  }
 
   if (rend->ecs->write_count) {
     vmaFlushAllocation(rend->allocator, rend->ecs->t_tmp_alloc, 0,
@@ -886,6 +912,11 @@ void VK_TickSystems(vk_rend_t *rend) {
     //                    VK_WHOLE_SIZE);
     vmaFlushAllocation(rend->allocator, rend->ecs->s_tmp_alloc, 0,
                        VK_WHOLE_SIZE);
+    if (rend->ecs->maps[rend->ecs->current_map].mapped_data != NULL) {
+      vmaFlushAllocation(rend->allocator,
+                         rend->ecs->maps[rend->ecs->current_map].tmp_alloc, 0,
+                         VK_WHOLE_SIZE);
+    }
   }
 
   // Apply all ECS writes
@@ -1141,8 +1172,27 @@ void VK_CreateMap(vk_rend_t *rend, unsigned w, unsigned h, unsigned idx) {
 }
 
 void VK_SetCurrentMap(vk_rend_t *rend, unsigned idx) {
-  printf("[ERROR] pls update descriptor set you dumb ass\n");
-  exit(-1);
+  // We have to initiate a write to the current map descriptor set
+  rend->ecs->current_map = idx;
+  rend->global_ubo.map_height = rend->ecs->maps[rend->ecs->current_map].h;
+  rend->global_ubo.map_width = rend->ecs->maps[rend->ecs->current_map].w;
+
+  VkDescriptorBufferInfo comp_map_buffer = {
+      .buffer = rend->ecs->maps[rend->ecs->current_map].buffer,
+      .offset = 0,
+      .range = VK_WHOLE_SIZE,
+  };
+  VkWriteDescriptorSet write = {
+      .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+      .dstSet = rend->ecs->ecs_set,
+      .dstBinding = 0,
+      .dstArrayElement = 0,
+      .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+      .descriptorCount = 1,
+      .pBufferInfo = &comp_map_buffer,
+  };
+
+  vkUpdateDescriptorSets(rend->device, 1, &write, 0, NULL);
 }
 
 void *VK_GetMap(vk_rend_t *rend, unsigned idx) {

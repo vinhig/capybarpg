@@ -483,31 +483,25 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
     // VkDeviceQueueCreateInfo queue_infos[] = {queue_graphics_info,
     //                                          queue_transfer_info};
 
+    VkPhysicalDeviceRobustness2FeaturesEXT robustness2 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
+        .nullDescriptor = VK_TRUE,
+    };
+
     VkPhysicalDeviceFeatures vulkan = {
         .samplerAnisotropy = VK_TRUE,
     };
 
-    VkPhysicalDeviceRobustness2FeaturesEXT robustness = {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
-        .nullDescriptor = true,
-        .pNext = &vulkan
-    };
-
-
-    VkPhysicalDeviceFeatures2 yeah = {
-      .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-      .pNext = &robustness,
-    };
-
     VkPhysicalDeviceVulkan11Features vulkan_11 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
-        .pNext = &yeah,
+        .pNext = &robustness2,
     };
 
     VkPhysicalDeviceVulkan12Features vulkan_12 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
         .descriptorBindingPartiallyBound = VK_TRUE,
         .descriptorBindingSampledImageUpdateAfterBind = VK_TRUE,
+        .descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE,
         .descriptorBindingVariableDescriptorCount = VK_TRUE,
         .shaderSampledImageArrayNonUniformIndexing = VK_TRUE,
         .runtimeDescriptorArray = VK_TRUE,
@@ -520,7 +514,8 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
         .dynamicRendering = VK_TRUE,
         .synchronization2 = VK_TRUE,
-        .pNext = &vulkan_12};
+        .pNext = &vulkan_12,
+    };
 
     VkDeviceCreateInfo device_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
@@ -529,7 +524,7 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
         .pNext = &vulkan_13,
         .enabledExtensionCount = vk_device_extension_count,
         .ppEnabledExtensionNames = vk_device_extensions,
-        // .pEnabledFeatures = &vulkan,
+        .pEnabledFeatures = &vulkan,
     };
 
     for (unsigned j = 0; j < vk_device_extension_count; j++) {
@@ -756,6 +751,7 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .maxSets = 200,
         .poolSizeCount = 4,
+        .flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT,
         .pPoolSizes = &pool_sizes[0],
     };
 
@@ -1001,8 +997,6 @@ void VK_Draw(vk_rend_t *rend, game_state_t *game) {
 
   rend->global_ubo.view_dim[0] = rend->width;
   rend->global_ubo.view_dim[1] = rend->height;
-  rend->global_ubo.map_width = 0;
-  rend->global_ubo.map_height = 0;
   rend->global_ubo.entity_count = rend->ecs->entity_count;
 
   void *data;
@@ -1020,8 +1014,6 @@ void VK_Draw(vk_rend_t *rend, game_state_t *game) {
       .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
       .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
   };
-
-  vkDeviceWaitIdle(rend->device);
 
   vkBeginCommandBuffer(cmd, &begin_info);
 

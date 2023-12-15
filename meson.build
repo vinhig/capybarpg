@@ -64,6 +64,27 @@ shaders = declare_dependency(
   sources: shader_targets
 )
 
+image_to_c = executable('image_to_c', 'external/image_to_c.c')
+
+images = ['source/resources/no_image.png']
+
+image_targets = []
+
+foreach i : images
+  target_name = '@0@.png'.format(s).split('/')
+  image_targets += custom_target(
+      target_name.get(target_name.length()-1),
+      output : '@BASENAME@.c',
+      input : i,
+      command : [image_to_c, '@INPUT@'],
+      capture : true # write stdout content to output file
+  )
+endforeach
+
+images = declare_dependency(
+  sources: image_targets
+)
+
 jps = executable('a_star',
   'benchmark/jps.c',
   'external/jps.c',
@@ -120,4 +141,4 @@ exe = executable('maidenless',
     include_directories('external/qclib/')
   ],
   link_with: [qcvm],
-  dependencies: [sdl2, opengl, vulkan, dl, m, shaders])
+  dependencies: [sdl2, opengl, vulkan, dl, m, shaders, images])

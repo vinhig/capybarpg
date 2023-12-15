@@ -20,6 +20,9 @@
 //
 #include <qclib/qclib.h>
 
+extern const char no_image[];
+extern const unsigned no_image_size;
+
 #define CORRIDOR 1
 
 ZPL_TABLE_DECLARE(extern, material_bank_t, G_Materials_, material_t)
@@ -158,6 +161,7 @@ game_t *G_CreateGame(client_t *client, char *base) {
 
   game->textures = calloc(32, sizeof(texture_t));
   game->texture_capacity = 32;
+  game->texture_count = 0;
 
   game->base = base;
 
@@ -315,6 +319,25 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
   VK_TickSystems(game->rend);
 
   return game->state;
+}
+
+texture_t G_LoadSingleTextureFromMemory(const unsigned char *pdata,
+                                        unsigned len, const char *label) {
+  stbi_set_flip_vertically_on_load(true);
+  int w, h, c;
+  unsigned char *data = stbi_load_from_memory(pdata, len, &w, &h, &c, 4);
+
+  if (!data) {
+    printf("omgggg.\n");
+  }
+
+  return (texture_t){
+      .c = c,
+      .data = data,
+      .height = h,
+      .width = w,
+      .label = label,
+  };
 }
 
 texture_t G_LoadSingleTexture(const char *path) {
@@ -936,12 +959,14 @@ void G_WorkerLoadTexture(void *data) {
   }
 
   zpl_mutex_lock(&game->texture_mutex);
+  printf("game->texture_count == %d\n", game->texture_count);
   if (game->texture_count == game->texture_capacity) {
     game->texture_capacity *= 2;
     game->textures =
         realloc(game->textures, game->texture_capacity * sizeof(texture_t));
   }
   game->textures[game->texture_count] = tex;
+  *the_job->dest_text = game->texture_count;
   game->texture_count++;
 
   zpl_mutex_unlock(&game->texture_mutex);
@@ -951,6 +976,13 @@ void G_Load_Game(worker_t *worker) {
   game_t *game = worker->game;
 
   zpl_f64 now = zpl_time_rel();
+
+  // Load the default texture, that'll have a null index (index == 0)
+  // So, everytime there is an error, it'll be displayed
+  // WARNING: kinda weeb stuff
+  game->textures[0] = G_LoadSingleTextureFromMemory(&no_image[0], no_image_size,
+                                                    "resources/no_image.png");
+  game->texture_count = 1;
 
   texture_job_t *texture_jobs =
       calloc(zpl_array_count(game->material_bank.entries) * 3 +
@@ -1117,6 +1149,8 @@ void G_Load_Game(worker_t *worker) {
 
   printf("[VERBOSE] Loading game took `%f` ms\n",
          (float)(zpl_time_rel() - now));
+
+  VK_UploadTextures(game->rend, game->textures, game->texture_count);
 
   G_Run_Scene(worker, game->next_scene);
 
@@ -1469,7 +1503,6 @@ void G_Install_QCVM(worker_t *worker) {
 }
 
 bool G_Load(client_t *client, game_t *game) {
-
   game->cpu_agents = calloc(3000, sizeof(cpu_agent_t));
   time_t seed = time(NULL);
   srand(seed);

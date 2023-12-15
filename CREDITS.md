@@ -8,3 +8,5 @@ A big thanks to:
 - https://github.com/cktan/tomlc99
 - https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator
 - https://github.com/jkuhlmann/cgltf
+- https://github.com/bitbank2/image_to_c
+- https://github.com/zpl-c/zpl
