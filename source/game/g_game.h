@@ -48,6 +48,15 @@ typedef struct material_t {
   char *full_stack_path;
 } material_t;
 
+typedef struct terrain_t {
+  char *name;
+
+  unsigned revision;
+
+  unsigned terrain_tex;
+  char *terrain_path;
+} terrain_t;
+
 typedef struct wall_t {
   char *name;
 
@@ -115,4 +124,4 @@ void G_DestroyGame(game_t *game);
 
 bool G_Load(client_t *client, game_t *game);
 
-void G_Rectangle(ivec2 start, ivec2 end, unsigned *indices, unsigned *count);
+void G_Rectangle(ivec2 start, ivec2 end, int *indices, int *count);

@@ -25,6 +25,7 @@
         "qcvm_private.h": "c",
         "qcvm.h": "c",
         "zpl.h": "c",
-        "sdl_thread.h": "c"
+        "sdl_thread.h": "c",
+        "g_private.h": "c"
     }
 }

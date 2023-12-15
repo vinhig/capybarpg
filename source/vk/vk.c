@@ -140,7 +140,7 @@ void VK_TransitionDepthTexture(VkCommandBuffer cmd, VkImage image,
 const char *vk_instance_layers[] = {
     "VK_LAYER_KHRONOS_validation",
 };
-const unsigned vk_instance_layer_count = 1;
+const unsigned vk_instance_layer_count = 0;
 
 const char *vk_instance_extensions[] = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME};
 const unsigned vk_instance_extension_count = 1;

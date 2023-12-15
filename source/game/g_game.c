@@ -1,157 +1,15 @@
+#include <game/g_private.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
-
-#include "client/cl_client.h"
-#include "game/g_game.h"
-#include "stbi_image.h"
-#include "vk/vk_system.h"
-#include "vk/vk_vulkan.h"
-
-#include <SDL2/SDL_thread.h>
-#include <cglm/cam.h>
-#include <cglm/vec2.h>
-#include <intlist.h>
+#include <string.h>
 #include <jps.h>
-#include <qcvm/qcvm.h>
-#include <zpl/zpl.h>
-//
-#include <qclib/qclib.h>
 
 extern const char no_image[];
 extern const unsigned no_image_size;
-
-#define CORRIDOR 1
-
-ZPL_TABLE_DECLARE(extern, material_bank_t, G_Materials_, material_t)
-ZPL_TABLE_DECLARE(extern, texture_bank_t, G_ImmediateTextures_, texture_t)
-ZPL_TABLE_DECLARE(extern, wall_bank_t, G_Walls_, wall_t)
-
-typedef struct cpu_path_t {
-  vec2 *points;
-  unsigned count;
-  unsigned current;
-} cpu_path_t;
-
-typedef struct cpu_agent_t {
-  vec2 target;
-  float speed;
-  enum agent_state_e {
-    AGENT_PATH_FINDING,
-    AGENT_MOVING,
-    AGENT_NOTHING,
-  } state;
-
-  cpu_path_t computed_path;
-} __attribute__((aligned(16))) cpu_agent_t;
-
-typedef struct node_t node_t;
-
-typedef struct texture_job_t {
-  const char *path;
-  unsigned *dest_text;
-
-  game_t *game;
-} texture_job_t;
-
-typedef struct map_t {
-  struct map *jps_map;
-  zpl_mutex mutex;
-
-  unsigned w;
-  unsigned h;
-
-  struct Tile *gpu_tiles;
-} map_t;
-
-typedef struct worker_t {
-  // Hey hey, I heard QCVM wasn't thread-safe. So i just init a QCVM for each
-  // worker thread. Hope you don't mind!
-  qcvm_t *qcvm;
-
-  unsigned id;
-  game_t *game;
-
-  map_t maps[16];
-} worker_t;
-
-typedef enum listener_type_t {
-  G_SCENE_START,
-  G_SCENE_END,
-  G_SCENE_UPDATE,
-  G_LISTENER_TYPE_COUNT,
-} listener_type_t;
-
-typedef struct listener_t {
-  int qcvm_func;
-} listener_t;
-
-typedef struct scene_t {
-  const char *name;
-
-  listener_t start_listeners[16];
-  unsigned start_listener_count;
-
-  listener_t update_listeners[16];
-  unsigned update_listener_count;
-
-  listener_t end_listeners[16];
-  unsigned end_listener_count;
-
-  zpl_mutex scene_mutex;
-  int current_map;
-} scene_t;
-
-struct game_t {
-  vk_system_t *model_matrix_sys;
-  vk_system_t *path_finding_sys;
-
-  cpu_agent_t *cpu_agents;
-  struct Agent *gpu_agents;
-  struct Transform *transforms;
-
-  unsigned entity_count;
-  unsigned *entities;
-
-  unsigned worker_count;
-  worker_t workers[32];
-  zpl_jobs_system job_sys;
-
-  char *base;
-
-  scene_t *scenes;
-  unsigned scene_count;
-  unsigned scene_capacity;
-
-  char *next_scene;
-  scene_t *current_scene;
-
-  texture_t *textures;
-  unsigned texture_count;
-  unsigned texture_capacity;
-  zpl_mutex texture_mutex;
-
-  zpl_mutex global_map_mutex;
-  unsigned map_count;
-
-  // Asset banks
-  material_bank_t material_bank;
-  wall_bank_t wall_bank;
-  texture_bank_t immediate_texture_bank;
-
-  // Game state, reset each frame
-  // The renderer use this to draw the frame
-  game_state_t state;
-
-  float last_time;
-  float delta_time;
-
-  // Hello
-  vk_rend_t *rend;
-  client_t *client;
-};
 
 game_t *G_CreateGame(client_t *client, char *base) {
   // At the moment, randomly spawn 3000 pawns. And make them wander.
@@ -367,7 +225,7 @@ int G_Create_Map(game_t *game, unsigned w, unsigned h) {
   for (unsigned i = 0; i < game->worker_count; i++) {
     map_t *the_map = &game->workers[i].maps[game->map_count];
     zpl_mutex_lock(&the_map->mutex);
-    the_map->jps_map = jps_create(256, 256);
+    the_map->jps_map = jps_create(w, h);
     the_map->w = w;
     the_map->h = h;
     the_map->gpu_tiles = VK_GetMap(game->rend, game->map_count);
@@ -959,7 +817,6 @@ void G_WorkerLoadTexture(void *data) {
   }
 
   zpl_mutex_lock(&game->texture_mutex);
-  printf("game->texture_count == %d\n", game->texture_count);
   if (game->texture_count == game->texture_capacity) {
     game->texture_capacity *= 2;
     game->textures =
@@ -1229,18 +1086,7 @@ void G_Add_Wall_QC(qcvm_t *qcvm) {
            health);
     return;
   }
-  if (x < 0.0f) {
-    printf("[ERROR] Assertion G_Add_Wall_QC(x > 0.0) [x = %f] should be "
-           "verified.\n",
-           x);
-    return;
-  }
-  if (y < 0.0f) {
-    printf("[ERROR] Assertion G_Add_Wall_QC(x > 0.0) [y = %f] should be "
-           "verified.\n",
-           y);
-    return;
-  }
+
   if (map < 0 || map >= (int)game->map_count) {
     printf("[ERROR] Assertion G_Add_Wall_QC(map >= 0 || map < game->map_count) "
            "[map = %d, map_count = %d] should be "
@@ -1249,6 +1095,8 @@ void G_Add_Wall_QC(qcvm_t *qcvm) {
     return;
   }
 
+  map_t *the_map = &worker->maps[map];
+
   zpl_u64 key = zpl_fnv64(recipe, strlen(recipe));
   wall_t *w = G_Walls_get(&game->wall_bank, key);
 
@@ -1256,6 +1104,24 @@ void G_Add_Wall_QC(qcvm_t *qcvm) {
     printf("[ERROR] Assertion G_Add_Wall_QC(recipe exists) [recipe = \"%s\"] "
            "should be verified.\n",
            recipe);
+    return;
+  }
+
+  if (x < 0.0f || x >= the_map->w) {
+    printf("[ERROR] Assertion G_Map_Set_Terrain_Type(x >= 0 || x < "
+           "map->w) "
+           "[x = %d, map->w = %d] should be "
+           "verified.\n",
+           (unsigned)x, the_map->w);
+    return;
+  }
+
+  if (y < 0.0f || y >= the_map->h) {
+    printf("[ERROR] Assertion G_Map_Set_Terrain_Type(y >= 0 || y < "
+           "map->y) "
+           "[y = %d, map->h = %d] should be "
+           "verified.\n",
+           (unsigned)x, the_map->h);
     return;
   }
 

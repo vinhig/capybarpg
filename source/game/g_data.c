@@ -10,3 +10,6 @@ ZPL_TABLE_DEFINE(wall_bank_t, G_Walls_, wall_t)
 
 ZPL_TABLE_DECLARE(extern, texture_bank_t, G_ImmediateTextures_, texture_t)
 ZPL_TABLE_DEFINE(texture_bank_t, G_ImmediateTextures_, texture_t)
+
+ZPL_TABLE_DECLARE(extern, terrain_bank_t, G_Terrains_, terrain_t)
+ZPL_TABLE_DEFINE(terrain_bank_t, G_Terrains_, terrain_t)
