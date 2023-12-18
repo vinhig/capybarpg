@@ -307,8 +307,6 @@ void G_Add_Wall(game_t *game, int map, int x, int y, float health,
         }
       }
     }
-    printf("hello hello idx=%d, x=%d, y=%d, wall_recipe=%d\n", idx, x, y,
-           wall_recipe->nothing_tex);
   }
 
   zpl_mutex_unlock(&game->maps[map].mutex);
