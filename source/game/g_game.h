@@ -21,7 +21,8 @@ typedef struct game_state_t {
     mat4 view;
     mat4 proj;
     mat4 view_proj;
-    // vec3 pos;
+    vec3 pos;
+    float zoom;
   } fps;
 
   struct {
@@ -53,8 +54,14 @@ typedef struct terrain_t {
 
   unsigned revision;
 
-  unsigned terrain_tex;
-  char *terrain_path;
+  unsigned variant1_tex;
+  char *variant1_path;
+
+  unsigned variant2_tex;
+  char *variant2_path;
+
+  unsigned variant3_tex;
+  char *variant3_path;
 } terrain_t;
 
 typedef struct wall_t {

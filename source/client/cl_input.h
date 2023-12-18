@@ -10,19 +10,24 @@ typedef struct client_t client_t;
  * analogic.
  */
 typedef struct input_t {
-    float zoom;
-//   // As in a joystick. The left pad allows to move gradually in both direction.
-//   struct {
-//     float x_axis;
-//     float y_axis;
-//   } movement;
+  float zoom;
+  // As in a joystick. The left pad allows to move gradually in both direction.
+  struct {
+    float x_axis;
+    float y_axis;
+  } movement;
 
-//   // As in a joystick. The right pad allows to rotate the camera gradually in
-//   // both direction.
-//   struct {
-//     float x_axis;
-//     float y_axis;
-//   } view;
+  float wheel;
+
+  // As in a joystick. The right pad allows to rotate the camera gradually in
+  // both direction.
+  struct {
+    float x_axis;
+    float y_axis;
+  } view;
+
+  unsigned mouse_x;
+  unsigned mouse_y;
 } input_t;
 
 input_t *CL_GetInput(client_t *client);

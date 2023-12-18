@@ -26,6 +26,13 @@
         "qcvm.h": "c",
         "zpl.h": "c",
         "sdl_thread.h": "c",
-        "g_private.h": "c"
+        "g_private.h": "c",
+        "charconv": "c",
+        "optional": "c",
+        "ratio": "c",
+        "system_error": "c",
+        "tuple": "c",
+        "type_traits": "c",
+        "utility": "c"
     }
 }

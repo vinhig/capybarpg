@@ -47,15 +47,15 @@ struct Immovable {
 #define immovable_signature 1 << 4
 
 struct Tile {
-  uint wall;
-  uint texture;
+  uint wall_texture;
+  uint terrain_texture;
 
   uint selected;
   uint fire;
 };
 
 #ifndef is_C
-layout(std430, set = SET, binding = 0) buffer Map { Tile tiles[256][256]; };
+layout(std430, set = SET, binding = 0) buffer Map { Tile tiles[]; };
 
 layout(std430, set = SET, binding = 1) buffer Entities { uint entities[]; };
 

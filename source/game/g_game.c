@@ -1,12 +1,13 @@
+#include <client/cl_input.h>
 #include <game/g_private.h>
 
+#include <jps.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
-#include <string.h>
-#include <jps.h>
 
 extern const char no_image[];
 extern const unsigned no_image_size;
@@ -20,6 +21,8 @@ game_t *G_CreateGame(client_t *client, char *base) {
   game->textures = calloc(32, sizeof(texture_t));
   game->texture_capacity = 32;
   game->texture_count = 0;
+
+  game->state.fps.zoom = 0.5f;
 
   game->base = base;
 
@@ -49,6 +52,7 @@ game_t *G_CreateGame(client_t *client, char *base) {
   G_Materials_init(&game->material_bank, zpl_heap_allocator());
   G_ImmediateTextures_init(&game->immediate_texture_bank, zpl_heap_allocator());
   G_Walls_init(&game->wall_bank, zpl_heap_allocator());
+  G_Terrains_init(&game->terrain_bank, zpl_heap_allocator());
 
   // Add "model" system at the end, just compute the model matrix for each
   // transform
@@ -128,7 +132,10 @@ void G_DestroyGame(game_t *game) {
 //   }
 // }
 
-void G_ResetGameState(game_t *game) { game->state = (game_state_t){}; }
+void G_ResetGameState(game_t *game) {
+  game->state.draw_count = 0;
+  memset(&game->state.draws, 0, sizeof(game->state.draws));
+}
 
 game_state_t G_TickGame(client_t *client, game_t *game) {
   G_ResetGameState(game);
@@ -139,9 +146,9 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
   float ratio = (float)w / (float)h;
 
   glm_mat4_identity(game->state.fps.view);
-  float zoom = 0.05f;
-  float offset_x = 85.0f / 3.0f;
-  float offset_y = 85.0f / 3.0f;
+  float zoom = game->state.fps.zoom;
+  float offset_x = game->state.fps.pos[0];
+  float offset_y = game->state.fps.pos[1];
   glm_ortho(-1.0 * ratio / zoom + offset_x, 1.0 * ratio / zoom + offset_x,
             -1.0f / zoom + offset_y, 1.0f / zoom + offset_y, 0.01, 50.0,
             (vec4 *)&game->state.fps.view_proj);
@@ -157,6 +164,13 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
       qcvm_set_parm_float(game->workers[0].qcvm, 0, game->delta_time);
       qcvm_run(game->workers[0].qcvm,
                game->current_scene->update_listeners[i].qcvm_func);
+    }
+
+    for (unsigned i = 0; i < game->current_scene->camera_update_listener_count;
+         i++) {
+      qcvm_set_parm_float(game->workers[0].qcvm, 0, game->delta_time);
+      qcvm_run(game->workers[0].qcvm,
+               game->current_scene->camera_update_listeners[i].qcvm_func);
     }
 
     for (unsigned i = 0; i < game->entity_count; i++) {
@@ -223,12 +237,13 @@ int G_Create_Map(game_t *game, unsigned w, unsigned h) {
 
   // Init the same map accross all workers
   for (unsigned i = 0; i < game->worker_count; i++) {
-    map_t *the_map = &game->workers[i].maps[game->map_count];
+    map_t *the_map = &game->maps[game->map_count];
     zpl_mutex_lock(&the_map->mutex);
     the_map->jps_map = jps_create(w, h);
     the_map->w = w;
     the_map->h = h;
     the_map->gpu_tiles = VK_GetMap(game->rend, game->map_count);
+    the_map->cpu_tiles = calloc(sizeof(cpu_tile_t), w * h);
 
     // Set every single tile to be the default PINK texture (texture == 0)
     // And not sure if the mapped data from the renderer is actually zeroed
@@ -355,6 +370,7 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
   // * animals
   // We extract them here in a specific order, cause there are some dependencies
   // (furnitures and walls are built with materials for example)
+  zpl_json_object *terrains = zpl_adt_find(&recipes, "terrains", false);
   zpl_json_object *materials = zpl_adt_find(&recipes, "materials", false);
   zpl_json_object *walls = zpl_adt_find(&recipes, "walls", false);
   zpl_json_object *furnitures = zpl_adt_find(&recipes, "furnitures", false);
@@ -367,6 +383,83 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
   // every single sprites, just the health). So the identifier is the only
   // mandatory field. Yes I know something like Rust or Go would have been
   // smarter than all this manual marshalling bullshit.
+
+  if (terrains && terrains->type == ZPL_ADT_TYPE_ARRAY) {
+    unsigned size = zpl_array_count(terrains->nodes);
+
+    for (unsigned i = 0; i < size; i++) {
+      zpl_adt_node *element = &terrains->nodes[i];
+      zpl_adt_node *id_node = zpl_adt_find(element, "id", false);
+
+      if (!id_node || id_node->type != ZPL_ADT_TYPE_STRING) {
+        printf("[WARNING] The element %d in the 'terrains' list doesn't have "
+               "an ID (of type string).\n",
+               i);
+        continue;
+      } else {
+        zpl_u64 key = zpl_fnv64(id_node->string, strlen(id_node->string));
+        // Does the bank contains this element? If not create an empty one.
+        terrain_t *terrain = G_Terrains_get(&game->terrain_bank, key);
+
+        if (!terrain) {
+          G_Terrains_set(&game->terrain_bank, key, (terrain_t){.revision = 1});
+          terrain = G_Terrains_get(&game->terrain_bank, key);
+
+          printf("hey! i added %s\n", id_node->string);
+        } else {
+          terrain->revision += 1;
+        }
+
+        zpl_adt_node *name_node = zpl_adt_find(element, "name", false);
+        zpl_adt_node *sprites_node = zpl_adt_find(element, "sprites", false);
+
+        zpl_adt_node *variant1_node = NULL;
+        zpl_adt_node *variant2_node = NULL;
+        zpl_adt_node *variant3_node = NULL;
+
+        // Some field may be NULL if not present, we don't care
+        if (name_node && name_node->type == ZPL_ADT_TYPE_STRING) {
+          if (terrain->name) {
+            free(terrain->name);
+          }
+          terrain->name =
+              memcpy(malloc(strlen(name_node->string)), name_node->string,
+                     strlen(name_node->string) + 1);
+        }
+
+        if (sprites_node && sprites_node->type == ZPL_ADT_TYPE_OBJECT) {
+          variant1_node = zpl_adt_find(sprites_node, "variant0", false);
+          variant2_node = zpl_adt_find(sprites_node, "variant1", false);
+          variant3_node = zpl_adt_find(sprites_node, "variant2", false);
+
+          if (variant1_node && variant1_node->type == ZPL_ADT_TYPE_STRING) {
+            if (terrain->variant1_path) {
+              free(terrain->variant1_path);
+            }
+            terrain->variant1_path = memcpy(
+                malloc(strlen(variant1_node->string) + 1),
+                variant1_node->string, strlen(variant1_node->string) + 1);
+          }
+          if (variant2_node && variant2_node->type == ZPL_ADT_TYPE_STRING) {
+            if (terrain->variant2_path) {
+              free(terrain->variant2_path);
+            }
+            terrain->variant2_path = memcpy(
+                malloc(strlen(variant2_node->string) + 1),
+                variant2_node->string, strlen(variant2_node->string) + 1);
+          }
+          if (variant3_node && variant3_node->type == ZPL_ADT_TYPE_STRING) {
+            if (terrain->variant3_path) {
+              free(terrain->variant3_path);
+            }
+            terrain->variant3_path = memcpy(
+                malloc(strlen(variant3_node->string) + 1),
+                variant3_node->string, strlen(variant3_node->string) + 1);
+          }
+        }
+      }
+    }
+  }
 
   if (materials && materials->type == ZPL_ADT_TYPE_ARRAY) {
     unsigned size = zpl_array_count(materials->nodes);
@@ -394,7 +487,8 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
 
         // Extract all relevant info from the JSON field
         zpl_adt_node *name_node = zpl_adt_find(element, "name", false);
-        zpl_adt_node *stack_size_node = zpl_adt_find(element, "name", false);
+        zpl_adt_node *stack_size_node =
+            zpl_adt_find(element, "stack_size", false);
         zpl_adt_node *sprites_node = zpl_adt_find(element, "sprites", false);
 
         zpl_adt_node *low_stack_node = NULL;
@@ -843,7 +937,8 @@ void G_Load_Game(worker_t *worker) {
 
   texture_job_t *texture_jobs =
       calloc(zpl_array_count(game->material_bank.entries) * 3 +
-                 zpl_array_count(game->wall_bank.entries) * 16,
+                 zpl_array_count(game->wall_bank.entries) * 16 +
+                 zpl_array_count(game->terrain_bank.entries) * 3,
              sizeof(texture_job_t));
 
   for (unsigned i = 0; i < zpl_array_count(game->material_bank.entries); i++) {
@@ -996,6 +1091,36 @@ void G_Load_Game(worker_t *worker) {
     zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, nothing_job);
   }
 
+  offset += zpl_array_count(game->wall_bank.entries) * 3;
+
+  for (unsigned i = 0; i < zpl_array_count(game->terrain_bank.entries); i++) {
+    terrain_bank_tEntry *entry = &game->terrain_bank.entries[i];
+    terrain_t *terrain = &entry->value;
+
+    texture_job_t *variant1_job = &texture_jobs[offset + i * 3 + 0];
+    *variant1_job = (texture_job_t){
+        .game = game,
+        .dest_text = &terrain->variant1_tex,
+        .path = terrain->variant1_path,
+    };
+    texture_job_t *variant2_job = &texture_jobs[offset + i * 3 + 1];
+    *variant2_job = (texture_job_t){
+        .game = game,
+        .dest_text = &terrain->variant2_tex,
+        .path = terrain->variant2_path,
+    };
+    texture_job_t *variant3_job = &texture_jobs[offset + i * 3 + 2];
+    *variant3_job = (texture_job_t){
+        .game = game,
+        .dest_text = &terrain->variant3_tex,
+        .path = terrain->variant3_path,
+    };
+
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, variant1_job);
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, variant2_job);
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, variant3_job);
+  }
+
   while (!zpl_jobs_done(&game->job_sys)) {
     zpl_jobs_process(&game->job_sys);
 
@@ -1050,24 +1175,6 @@ void G_Get_Last_Asset_Loaded_QC(qcvm_t *qcvm) {
   qcvm_return_string(qcvm, G_Get_Last_Asset_Loaded(game));
 }
 
-void G_Add_Wall(game_t *game, int map, int x, int y, float health,
-                const char *recipe) {
-  // Since JPS isn't multithread friendly, we maintain a copy in each worker. It
-  // forces us to lock and make the modification multiple times. We lock them
-  // all to be sure there is not bad surprise.
-  for (unsigned i = 0; i < game->worker_count; i++) {
-    zpl_mutex_lock(&game->workers[i].maps[map].mutex);
-  }
-
-  for (unsigned i = 0; i < game->worker_count; i++) {
-    jps_set_obstacle(game->workers[i].maps[map].jps_map, x, y, 1);
-  }
-
-  for (unsigned i = 0; i < game->worker_count; i++) {
-    zpl_mutex_unlock(&game->workers[i].maps[map].mutex);
-  }
-}
-
 void G_Add_Wall_QC(qcvm_t *qcvm) {
   worker_t *worker = qcvm_get_user_data(qcvm);
   game_t *game = (game_t *)worker->game;
@@ -1095,12 +1202,12 @@ void G_Add_Wall_QC(qcvm_t *qcvm) {
     return;
   }
 
-  map_t *the_map = &worker->maps[map];
+  map_t *the_map = &game->maps[map];
 
   zpl_u64 key = zpl_fnv64(recipe, strlen(recipe));
-  wall_t *w = G_Walls_get(&game->wall_bank, key);
+  wall_t *the_wall = G_Walls_get(&game->wall_bank, key);
 
-  if (!w) {
+  if (!the_wall) {
     printf("[ERROR] Assertion G_Add_Wall_QC(recipe exists) [recipe = \"%s\"] "
            "should be verified.\n",
            recipe);
@@ -1125,7 +1232,7 @@ void G_Add_Wall_QC(qcvm_t *qcvm) {
     return;
   }
 
-  G_Add_Wall(game, map, x, y, health, recipe);
+  G_Add_Wall(game, map, x, y, health, the_wall);
 }
 
 void G_Add_Scene(game_t *game, const char *name) {
@@ -1244,6 +1351,30 @@ void G_Add_Listener(game_t *game, listener_type_t type, const char *attachment,
 
     break;
   }
+  case G_CAMERA_UPDATE: {
+    scene_t *the_scene = G_Get_Scene_By_Name(game, attachment);
+
+    if (the_scene) {
+      if (the_scene->camera_update_listener_count == 16) {
+        printf("[ERROR] Reached max number of `G_CAMERA_UPDATE` for the scene "
+               "`%s`.\n",
+               attachment);
+
+        return;
+      }
+      the_scene
+          ->camera_update_listeners[the_scene->camera_update_listener_count]
+          .qcvm_func = func;
+      the_scene->camera_update_listener_count++;
+    } else {
+      printf(
+          "[ERROR] QuakeC code specified a non-existent scene `%s` when trying "
+          "to attach a `G_CAMERA_UPDATE` listener.\n",
+          attachment);
+    }
+
+    break;
+  }
   default:
     break;
   }
@@ -1268,6 +1399,62 @@ void G_Add_Listener_QC(qcvm_t *qcvm) {
 
   G_Add_Listener(((worker_t *)qcvm_get_user_data(qcvm))->game, listener_type,
                  attachment, func_id);
+}
+
+void G_Get_Camera_Position_QC(qcvm_t *qcvm) {
+  game_t *game = ((worker_t *)qcvm_get_user_data(qcvm))->game;
+  qcvm_return_vector(qcvm, game->state.fps.pos[0], game->state.fps.pos[1],
+                     game->state.fps.pos[2]);
+}
+
+void G_Set_Camera_Position_QC(qcvm_t *qcvm) {
+  game_t *game = ((worker_t *)qcvm_get_user_data(qcvm))->game;
+
+  qcvm_vec3_t vec = qcvm_get_parm_vector(qcvm, 0);
+
+  game->state.fps.pos[0] = vec.x;
+  game->state.fps.pos[1] = vec.y;
+  game->state.fps.pos[2] = vec.z;
+}
+
+void G_Get_Camera_Zoom_QC(qcvm_t *qcvm) {
+  game_t *game = ((worker_t *)qcvm_get_user_data(qcvm))->game;
+
+  qcvm_return_float(qcvm, game->state.fps.zoom);
+}
+
+void G_Set_Camera_Zoom_QC(qcvm_t *qcvm) {
+  game_t *game = ((worker_t *)qcvm_get_user_data(qcvm))->game;
+
+  game->state.fps.zoom = qcvm_get_parm_float(qcvm, 0);
+
+  // printf("game->state.fps.zoom = %f\n", game->state.fps.zoom);
+}
+
+void G_Get_Axis_QC(qcvm_t *qcvm) {
+  game_t *game = ((worker_t *)qcvm_get_user_data(qcvm))->game;
+  const char *axis = qcvm_get_parm_string(qcvm, 0);
+
+  if (strcmp(axis, "vertical") == 0) {
+    qcvm_return_float(qcvm, CL_GetInput(game->client)->movement.x_axis);
+  } else if (strcmp(axis, "horizontal") == 0) {
+    qcvm_return_float(qcvm, CL_GetInput(game->client)->movement.y_axis);
+  } else if (strcmp(axis, "mouse_wheel") == 0) {
+    qcvm_return_float(qcvm, CL_GetInput(game->client)->wheel);
+  }
+}
+
+void G_Get_Mouse_Position_QC(qcvm_t *qcvm) {
+  game_t *game = ((worker_t *)qcvm_get_user_data(qcvm))->game;
+  qcvm_return_vector(qcvm, CL_GetInput(game->client)->mouse_x,
+                     CL_GetInput(game->client)->mouse_y, 0.0f);
+}
+
+void G_Get_Screen_Size_QC(qcvm_t *qcvm) {
+  game_t *game = ((worker_t *)qcvm_get_user_data(qcvm))->game;
+  unsigned w, h;
+  CL_GetViewDim(game->client, &w, &h);
+  qcvm_return_vector(qcvm, (float)w, (float)h, 0.0f);
 }
 
 void G_Install_QCVM(worker_t *worker) {
@@ -1356,6 +1543,56 @@ void G_Install_QCVM(worker_t *worker) {
       .args[1] = {.name = "map", .type = QCVM_INT},
   };
 
+  qcvm_export_t export_G_Get_Camera_Position = {
+      .func = G_Get_Camera_Position_QC,
+      .name = "G_Get_Camera_Position",
+      .argc = 0,
+      .type = QCVM_VECTOR,
+  };
+
+  qcvm_export_t export_G_Set_Camera_Position = {
+      .func = G_Set_Camera_Position_QC,
+      .name = "G_Set_Camera_Position",
+      .argc = 1,
+      .args[0] = {.name = "value", .type = QCVM_VECTOR},
+  };
+
+  qcvm_export_t export_G_Get_Camera_Zoom = {
+      .func = G_Get_Camera_Zoom_QC,
+      .name = "G_Get_Camera_Zoom",
+      .argc = 1,
+      .type = QCVM_FLOAT,
+  };
+
+  qcvm_export_t export_G_Set_Camera_Zoom = {
+      .func = G_Set_Camera_Zoom_QC,
+      .name = "G_Set_Camera_Zoom",
+      .argc = 1,
+      .args[0] = {.name = "value", .type = QCVM_FLOAT},
+  };
+
+  qcvm_export_t export_G_Get_Axis = {
+      .func = G_Get_Axis_QC,
+      .name = "G_Get_Axis",
+      .argc = 1,
+      .args[0] = {.name = "axis", .type = QCVM_STRING},
+      .type = QCVM_FLOAT,
+  };
+
+  qcvm_export_t export_G_Get_Mouse_Position = {
+      .func = G_Get_Mouse_Position_QC,
+      .name = "G_Get_Mouse_Position",
+      .argc = 0,
+      .type = QCVM_VECTOR,
+  };
+
+  qcvm_export_t export_G_Get_Screen_Size = {
+      .func = G_Get_Screen_Size_QC,
+      .name = "G_Get_Screen_Size",
+      .argc = 0,
+      .type = QCVM_VECTOR,
+  };
+
   qcvm_add_export(worker->qcvm, &export_G_Add_Recipes);
   qcvm_add_export(worker->qcvm, &export_G_Load_Game);
   qcvm_add_export(worker->qcvm, &export_G_Get_Last_Asset_Loaded);
@@ -1366,6 +1603,13 @@ void G_Install_QCVM(worker_t *worker) {
   qcvm_add_export(worker->qcvm, &export_G_Add_Listener);
   qcvm_add_export(worker->qcvm, &export_G_Draw_Image_Relative);
   qcvm_add_export(worker->qcvm, &export_G_Set_Current_Map);
+  qcvm_add_export(worker->qcvm, &export_G_Get_Camera_Position);
+  qcvm_add_export(worker->qcvm, &export_G_Set_Camera_Position);
+  qcvm_add_export(worker->qcvm, &export_G_Get_Camera_Zoom);
+  qcvm_add_export(worker->qcvm, &export_G_Set_Camera_Zoom);
+  qcvm_add_export(worker->qcvm, &export_G_Get_Axis);
+  qcvm_add_export(worker->qcvm, &export_G_Get_Mouse_Position);
+  qcvm_add_export(worker->qcvm, &export_G_Get_Screen_Size);
 }
 
 bool G_Load(client_t *client, game_t *game) {
@@ -1399,6 +1643,7 @@ bool G_Load(client_t *client, game_t *game) {
 
     qclib_install(game->workers[i].qcvm);
     G_Install_QCVM(&game->workers[i]);
+    G_TerrainInstall(game->workers[i].qcvm);
 
     game->workers[i].id = i;
     qcvm_set_user_data(game->workers[i].qcvm, &game->workers[i]);

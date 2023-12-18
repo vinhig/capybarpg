@@ -100,7 +100,7 @@ bool CL_ParseClientDesc(client_desc_t *desc, int argc, char *argv[]) {
 }
 
 client_t *CL_CreateClient(const char *title, client_desc_t *desc) {
-  if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_JOYSTICK) != 0) {
     printf("Failed to initialize SDL2.\n");
     return NULL;
   }
@@ -150,6 +150,12 @@ client_t *CL_CreateClient(const char *title, client_desc_t *desc) {
 
   // SDL_SetRelativeMouseMode(true);
 
+  for (int i = 0; i < SDL_NumJoysticks(); i++) {
+    SDL_JoystickOpen(i);
+  }
+
+  printf("[VERBOSE] %d joystick(s) connected.", SDL_NumJoysticks());
+
   return client;
 }
 
@@ -165,6 +171,8 @@ void CL_GetViewDim(client_t *client, unsigned *width, unsigned *height) {
 void CL_UpdateClient(client_t *client) {
   SDL_Event event;
 
+  client->input.wheel = 0.0;
+
   //   client->input.view.x_axis = 0.0;
   //   client->input.view.y_axis = 0.0;
 
@@ -174,47 +182,61 @@ void CL_UpdateClient(client_t *client) {
       return;
     }
     switch (event.type) {
-    // case SDL_KEYDOWN: {
-    //   if (event.key.keysym.sym == SDLK_z) {
-    //     client->input.movement.x_axis = 1.0f;
-    //   } else if (event.key.keysym.sym == SDLK_s) {
-    //     client->input.movement.x_axis = -1.0f;
-    //   }
+    case SDL_MOUSEWHEEL: {
+      client->input.wheel = event.wheel.y;
+      break;
+    }
+    case SDL_KEYDOWN: {
+      if (event.key.keysym.sym == SDLK_z || event.key.keysym.sym == SDLK_UP) {
+        client->input.movement.x_axis = 1.0f;
+      } else if (event.key.keysym.sym == SDLK_s || event.key.keysym.sym == SDLK_DOWN) {
+        client->input.movement.x_axis = -1.0f;
+      }
 
-    //   if (event.key.keysym.sym == SDLK_q) {
-    //     client->input.movement.y_axis = 1.0f;
-    //   } else if (event.key.keysym.sym == SDLK_d) {
-    //     client->input.movement.y_axis = -1.0f;
-    //   }
+      if (event.key.keysym.sym == SDLK_q || event.key.keysym.sym == SDLK_LEFT) {
+        client->input.movement.y_axis = 1.0f;
+      } else if (event.key.keysym.sym == SDLK_d || event.key.keysym.sym == SDLK_RIGHT) {
+        client->input.movement.y_axis = -1.0f;
+      }
+      break;
+    }
+    case SDL_JOYAXISMOTION: {
+      // unsigned joystick_id = event.jdevice.which;
+      if (event.jaxis.axis == 0) {
+        float value = (float)event.jaxis.value / 32767.0f;
+        if (value < 5.0e-03 && value > -5.0e-03) {
+          value = 0.0f;
+        }
+        client->input.movement.y_axis = -value;
+      }
+      if (event.jaxis.axis == 1) {
+        float value = (float)event.jaxis.value / 32767.0f;
+        if (value < 5.0e-03 && value > -5.0e-03) {
+          value = 0.0f;
+        }
+        client->input.movement.x_axis = -value;
+      }
+      break;
+    }
+    case SDL_KEYUP: {
+      if (event.key.keysym.sym == SDLK_z || event.key.keysym.sym == SDLK_UP) {
+        client->input.movement.x_axis = 0.0f;
+      } else if (event.key.keysym.sym == SDLK_s || event.key.keysym.sym == SDLK_DOWN) {
+        client->input.movement.x_axis = 0.0f;
+      }
 
-    //   if (event.key.keysym.sym == SDLK_o) {
-    //     SDL_SetRelativeMouseMode(true);
-    //   }
-
-    //   if (event.key.keysym.sym == SDLK_ESCAPE) {
-    //     SDL_SetRelativeMouseMode(false);
-    //   }
-    //   break;
-    // }
-    // case SDL_KEYUP: {
-    //   if (event.key.keysym.sym == SDLK_z) {
-    //     client->input.movement.x_axis = 0.0f;
-    //   } else if (event.key.keysym.sym == SDLK_s) {
-    //     client->input.movement.x_axis = 0.0f;
-    //   }
-
-    //   if (event.key.keysym.sym == SDLK_q) {
-    //     client->input.movement.y_axis = 0.0f;
-    //   } else if (event.key.keysym.sym == SDLK_d) {
-    //     client->input.movement.y_axis = 0.0f;
-    //   }
-    //   break;
-    // }
-    // case SDL_MOUSEMOTION: {
-    //   client->input.view.x_axis = event.motion.yrel;
-    //   client->input.view.y_axis = -event.motion.xrel;
-    //   break;
-    // }
+      if (event.key.keysym.sym == SDLK_q || event.key.keysym.sym == SDLK_LEFT) {
+        client->input.movement.y_axis = 0.0f;
+      } else if (event.key.keysym.sym == SDLK_d || event.key.keysym.sym == SDLK_RIGHT) {
+        client->input.movement.y_axis = 0.0f;
+      }
+      break;
+    }
+    case SDL_MOUSEMOTION: {
+      client->input.view.x_axis = event.motion.yrel;
+      client->input.view.y_axis = -event.motion.xrel;
+      break;
+    }
     default: {
     }
     }

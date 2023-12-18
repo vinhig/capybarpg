@@ -40,70 +40,59 @@ layout(std430, set = 3, binding = 0) readonly buffer Visibles {
 
 layout(push_constant) uniform DrawState { uint draw_state; };
 
-// int get_wall_texture(int instance_x, instance_y) {
-//   bool top = tiles[instance_x][instance_y + 1].wall;
-//   bool bottom = tiles[instance_x][instance_y + 1].wall;
-//   bool left = tiles[instance_x - 1][instance_y].wall;
-//   bool right = tiles[instance_x + 1][instance_y].wall;
-
-//   if (top && !bottom && !left && !right) {
-//     return 3 + 17;
-//   } else if (top && bottom && !left && !right) {
-//     return 9 + 17;
-//   } else {
-//     return 1 + 17;
-//   }
-// }
-
 int wall_signature(int t, int b, int l, int r) {
   return t << 4 | b << 3 | l << 2 | r << 1;
 }
 
-int get_wall_texture(int instance_x, int instance_y) {
-  int top = int(tiles[instance_x][instance_y - 1].wall);
-  int bottom = int(tiles[instance_x][instance_y + 1].wall);
-  int left = int(tiles[instance_x - 1][instance_y].wall);
-  int right = int(tiles[instance_x + 1][instance_y].wall);
-
-  int wall_sig = wall_signature(top, bottom, left, right);
-
-  switch (wall_sig) {
-  case 1 << 1:
-    return 0 + 17;
-  case 0:
-    return 1 + 17;
-  case 1 << 2:
-    return 2 + 17;
-  case 1 << 4:
-    return 3 + 17;
-  case 1 << 3:
-    return 4 + 17;
-  case 1 << 4 | 1 << 3 | 1 << 2 | 1 << 1:
-    return 5 + 17;
-  case 1 << 3 | 1 << 2 | 1 << 1:
-    return 6 + 17;
-  case 1 << 2 | 1 << 1:
-    return 7 + 17;
-  case 1 << 4 | 1 << 2 | 1 << 1:
-    return 8 + 17;
-  case 1 << 4 | 1 << 3:
-    return 9 + 17;
-  case 1 << 4 | 1 << 1:
-    return 10 + 17;
-  case 1 << 2 | 1 << 4:
-    return 11 + 17;
-  case 1 << 1 | 1 << 3:
-    return 12 + 17;
-  case 1 << 2 | 1 << 3:
-    return 13 + 17;
-  case 1 << 4 | 1 << 3 | 1 << 2:
-    return 14 + 17;
-  case 1 << 4 | 1 << 3 | 1 << 1:
-    return 15 + 17;
-  default:
-    return 0;
-  }
+int get_idx(int instance_x, int instance_y) {
+  return instance_y * int(global_ubo.map_width) + instance_x;
 }
+
+// int get_wall_texture(int instance_x, int instance_y) {
+//   int top = int(tiles[get_idx(instance_x, instance_y - 1)].wall);
+//   int bottom = int(tiles[get_idx(instance_x, instance_y + 1)].wall);
+//   int left = int(tiles[get_idx(instance_x - 1, instance_y)].wall);
+//   int right = int(tiles[get_idx(instance_x + 1, instance_y)].wall);
+
+//   int wall_sig = wall_signature(top, bottom, left, right);
+
+//   switch (wall_sig) {
+//   case 1 << 1:
+//     return 0 + 17;
+//   case 0:
+//     return 1 + 17;
+//   case 1 << 2:
+//     return 2 + 17;
+//   case 1 << 4:
+//     return 3 + 17;
+//   case 1 << 3:
+//     return 4 + 17;
+//   case 1 << 4 | 1 << 3 | 1 << 2 | 1 << 1:
+//     return 5 + 17;
+//   case 1 << 3 | 1 << 2 | 1 << 1:
+//     return 6 + 17;
+//   case 1 << 2 | 1 << 1:
+//     return 7 + 17;
+//   case 1 << 4 | 1 << 2 | 1 << 1:
+//     return 8 + 17;
+//   case 1 << 4 | 1 << 3:
+//     return 9 + 17;
+//   case 1 << 4 | 1 << 1:
+//     return 10 + 17;
+//   case 1 << 2 | 1 << 4:
+//     return 11 + 17;
+//   case 1 << 1 | 1 << 3:
+//     return 12 + 17;
+//   case 1 << 2 | 1 << 3:
+//     return 13 + 17;
+//   case 1 << 4 | 1 << 3 | 1 << 2:
+//     return 14 + 17;
+//   case 1 << 4 | 1 << 3 | 1 << 1:
+//     return 15 + 17;
+//   default:
+//     return 0;
+//   }
+// }
 
 void main() {
   uint instance = visibles[gl_InstanceIndex];
@@ -117,13 +106,13 @@ void main() {
                                               0.0, 1.0);
     vtx_uv = square_uv[gl_VertexIndex];
     gl_Position.z = 0.9999;
-    if (tiles[instance_x][instance_y].wall == 1) {
-      uint the_floor = 12;
-      uint the_wall = get_wall_texture(instance_x, instance_y);
+    if (tiles[gl_InstanceIndex].wall_texture != 0) {
+      uint the_floor = tiles[gl_InstanceIndex].terrain_texture;
+      uint the_wall = tiles[gl_InstanceIndex].wall_texture;
 
       o_albedo_id = uvec4(the_floor, the_wall, 0, 0);
     } else {
-      o_albedo_id = uvec4(tiles[instance_x][instance_y].texture, uvec3(0));
+      o_albedo_id = uvec4(tiles[gl_InstanceIndex].terrain_texture, uvec3(0));
     }
 
   } else if (draw_state == 1) {

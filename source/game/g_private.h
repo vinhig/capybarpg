@@ -38,6 +38,13 @@ typedef struct cpu_agent_t {
   cpu_path_t computed_path;
 } __attribute__((aligned(16))) cpu_agent_t;
 
+typedef struct cpu_tile_t {
+  float health;
+
+  wall_t *related_wall_recipe;       // may be null
+  terrain_t *related_terrain_recipe; // may be null
+} cpu_tile_t;
+
 typedef struct node_t node_t;
 
 typedef struct texture_job_t {
@@ -55,6 +62,7 @@ typedef struct map_t {
   unsigned h;
 
   struct Tile *gpu_tiles;
+  cpu_tile_t* cpu_tiles;
 } map_t;
 
 typedef struct worker_t {
@@ -64,14 +72,13 @@ typedef struct worker_t {
 
   unsigned id;
   game_t *game;
-
-  map_t maps[16];
 } worker_t;
 
 typedef enum listener_type_t {
   G_SCENE_START,
   G_SCENE_END,
   G_SCENE_UPDATE,
+  G_CAMERA_UPDATE,
   G_LISTENER_TYPE_COUNT,
 } listener_type_t;
 
@@ -90,6 +97,9 @@ typedef struct scene_t {
 
   listener_t end_listeners[16];
   unsigned end_listener_count;
+
+  listener_t camera_update_listeners[16];
+  unsigned camera_update_listener_count;
 
   zpl_mutex scene_mutex;
   int current_map;
@@ -140,7 +150,13 @@ struct game_t {
   float last_time;
   float delta_time;
 
+  map_t maps[16];
+
   // Hello
   vk_rend_t *rend;
   client_t *client;
 };
+
+void G_TerrainInstall(qcvm_t *qcvm);
+void G_Add_Wall(game_t *game, int map, int x, int y, float health,
+                wall_t *wall_recipe);
