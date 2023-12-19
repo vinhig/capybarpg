@@ -11,6 +11,8 @@ struct client_t {
   SDL_Window *window;
   client_state_t state;
 
+  client_console_t *console;
+
   unsigned v_width, v_height;
 
   vk_rend_t *rend;
@@ -154,7 +156,9 @@ client_t *CL_CreateClient(const char *title, client_desc_t *desc) {
     SDL_JoystickOpen(i);
   }
 
-  printf("[VERBOSE] %d joystick(s) connected.", SDL_NumJoysticks());
+  printf("[VERBOSE] %d joystick(s) connected.\n", SDL_NumJoysticks());
+
+  CL_InitConsole(client, &client->console);
 
   return client;
 }
@@ -173,81 +177,119 @@ void CL_UpdateClient(client_t *client) {
 
   client->input.wheel = 0.0;
 
-  //   client->input.view.x_axis = 0.0;
-  //   client->input.view.y_axis = 0.0;
-
-  while (SDL_PollEvent(&event)) {
-    if (event.type == SDL_QUIT) {
-      client->state = CLIENT_QUITTING;
-      return;
-    }
-    switch (event.type) {
-    case SDL_MOUSEWHEEL: {
-      client->input.wheel = event.wheel.y;
-      break;
-    }
-    case SDL_KEYDOWN: {
-      if (event.key.keysym.sym == SDLK_z || event.key.keysym.sym == SDLK_UP) {
-        client->input.movement.x_axis = 1.0f;
-      } else if (event.key.keysym.sym == SDLK_s || event.key.keysym.sym == SDLK_DOWN) {
-        client->input.movement.x_axis = -1.0f;
+  if (CL_ConsoleOpened(client->console)) {
+    while (SDL_PollEvent(&event)) {
+      if (event.type == SDL_QUIT) {
+        client->state = CLIENT_QUITTING;
+        return;
       }
 
-      if (event.key.keysym.sym == SDLK_q || event.key.keysym.sym == SDLK_LEFT) {
-        client->input.movement.y_axis = 1.0f;
-      } else if (event.key.keysym.sym == SDLK_d || event.key.keysym.sym == SDLK_RIGHT) {
-        client->input.movement.y_axis = -1.0f;
-      }
-      break;
-    }
-    case SDL_JOYAXISMOTION: {
-      // unsigned joystick_id = event.jdevice.which;
-      if (event.jaxis.axis == 0) {
-        float value = (float)event.jaxis.value / 32767.0f;
-        if (value < 5.0e-03 && value > -5.0e-03) {
-          value = 0.0f;
+      switch (event.type) {
+      case SDL_KEYUP: {
+        if (event.key.keysym.sym == 178) {
+          // The little ² at the upper left of your keyboard (assuming an AZERTY
+          // keyboard)
+          printf("[VERBOSE] Closing console.\n");
+          CL_ToggleConsole(client->console);
         }
-        client->input.movement.y_axis = -value;
+        break;
       }
-      if (event.jaxis.axis == 1) {
-        float value = (float)event.jaxis.value / 32767.0f;
-        if (value < 5.0e-03 && value > -5.0e-03) {
-          value = 0.0f;
-        }
-        client->input.movement.x_axis = -value;
       }
-      break;
     }
-    case SDL_KEYUP: {
-      if (event.key.keysym.sym == SDLK_z || event.key.keysym.sym == SDLK_UP) {
-        client->input.movement.x_axis = 0.0f;
-      } else if (event.key.keysym.sym == SDLK_s || event.key.keysym.sym == SDLK_DOWN) {
-        client->input.movement.x_axis = 0.0f;
-      }
 
-      if (event.key.keysym.sym == SDLK_q || event.key.keysym.sym == SDLK_LEFT) {
-        client->input.movement.y_axis = 0.0f;
-      } else if (event.key.keysym.sym == SDLK_d || event.key.keysym.sym == SDLK_RIGHT) {
-        client->input.movement.y_axis = 0.0f;
+  } else {
+    //   client->input.view.x_axis = 0.0;
+    //   client->input.view.y_axis = 0.0;
+
+    while (SDL_PollEvent(&event)) {
+      if (event.type == SDL_QUIT) {
+        client->state = CLIENT_QUITTING;
+        return;
       }
-      break;
-    }
-    case SDL_MOUSEMOTION: {
-      client->input.view.x_axis = event.motion.yrel;
-      client->input.view.y_axis = -event.motion.xrel;
-      break;
-    }
-    default: {
-    }
+      switch (event.type) {
+      case SDL_MOUSEWHEEL: {
+        client->input.wheel = event.wheel.y;
+        break;
+      }
+      case SDL_KEYDOWN: {
+        if (event.key.keysym.sym == SDLK_z || event.key.keysym.sym == SDLK_UP) {
+          client->input.movement.x_axis = 1.0f;
+        } else if (event.key.keysym.sym == SDLK_s ||
+                   event.key.keysym.sym == SDLK_DOWN) {
+          client->input.movement.x_axis = -1.0f;
+        }
+
+        if (event.key.keysym.sym == SDLK_q ||
+            event.key.keysym.sym == SDLK_LEFT) {
+          client->input.movement.y_axis = 1.0f;
+        } else if (event.key.keysym.sym == SDLK_d ||
+                   event.key.keysym.sym == SDLK_RIGHT) {
+          client->input.movement.y_axis = -1.0f;
+        }
+        break;
+      }
+      case SDL_JOYAXISMOTION: {
+        // unsigned joystick_id = event.jdevice.which;
+        if (event.jaxis.axis == 0) {
+          float value = (float)event.jaxis.value / 32767.0f;
+          if (value < 5.0e-03 && value > -5.0e-03) {
+            value = 0.0f;
+          }
+          client->input.movement.y_axis = -value;
+        }
+        if (event.jaxis.axis == 1) {
+          float value = (float)event.jaxis.value / 32767.0f;
+          if (value < 5.0e-03 && value > -5.0e-03) {
+            value = 0.0f;
+          }
+          client->input.movement.x_axis = -value;
+        }
+        break;
+      }
+      case SDL_KEYUP: {
+        if (event.key.keysym.sym == SDLK_z || event.key.keysym.sym == SDLK_UP) {
+          client->input.movement.x_axis = 0.0f;
+        } else if (event.key.keysym.sym == SDLK_s ||
+                   event.key.keysym.sym == SDLK_DOWN) {
+          client->input.movement.x_axis = 0.0f;
+        }
+
+        if (event.key.keysym.sym == SDLK_q ||
+            event.key.keysym.sym == SDLK_LEFT) {
+          client->input.movement.y_axis = 0.0f;
+        } else if (event.key.keysym.sym == SDLK_d ||
+                   event.key.keysym.sym == SDLK_RIGHT) {
+          client->input.movement.y_axis = 0.0f;
+        }
+
+        if (event.key.keysym.sym == 178) {
+          // The little ² at the upper left of your keyboard (assuming an AZERTY
+          // keyboard)
+          printf("[VERBOSE] Opening console.\n");
+          CL_ToggleConsole(client->console);
+        }
+
+        break;
+      }
+      case SDL_MOUSEMOTION: {
+        client->input.view.x_axis = event.motion.yrel;
+        client->input.view.y_axis = -event.motion.xrel;
+        break;
+      }
+      default: {
+      }
+      }
     }
   }
 }
 
 void CL_DrawClient(client_t *client, game_state_t *state) {
+  CL_DrawConsole(client, state, client->console);
   VK_Draw(client->rend, state);
 }
 
 void CL_DestroyClient(client_t *client) {
+  CL_DestroyConsole(client, client->console);
   VK_DestroyRend(client->rend);
   SDL_DestroyWindow(client->window);
   SDL_Quit();

@@ -14,6 +14,19 @@ struct Sprite;
 struct Agent;
 struct Immovable;
 
+typedef struct game_immediate_draw_t {
+  float x, y, z;
+  float w, h;
+  unsigned handle;
+} game_immediate_draw_t;
+
+typedef struct game_text_draw_t {
+  vec4 color;
+  vec2 pos;
+  vec2 size;
+  unsigned tex;
+} game_text_draw_t;
+
 typedef struct game_state_t {
   // First person camera.
   // Yes, we want to speed gameplay
@@ -25,12 +38,13 @@ typedef struct game_state_t {
     float zoom;
   } fps;
 
-  struct {
-    float x, y, z;
-    float w, h;
-    unsigned handle;
-  } draws[64];
+  game_immediate_draw_t draws[64];
   unsigned draw_count;
+
+  // This is updated by the console
+  // but stored in game state
+  game_text_draw_t texts[1024];
+  unsigned text_count;
 
 } game_state_t;
 

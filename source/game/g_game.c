@@ -1132,7 +1132,7 @@ void G_Load_Game(worker_t *worker) {
   printf("[VERBOSE] Loading game took `%f` ms\n",
          (float)(zpl_time_rel() - now));
 
-  VK_UploadTextures(game->rend, game->textures, game->texture_count);
+  VK_UploadMapTextures(game->rend, game->textures, game->texture_count);
 
   G_Run_Scene(worker, game->next_scene);
 

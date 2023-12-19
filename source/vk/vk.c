@@ -2,14 +2,16 @@
 #include "vk/vk_system.h"
 #include "vk/vk_vulkan.h"
 
-#include "cglm/cglm.h"
-
+#include <assert.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "game/g_game.h"
+#include "vk_mem_alloc.h"
 #include <SDL2/SDL_vulkan.h>
+#include <vulkan/vulkan_core.h>
 
 static unsigned error_count = 0;
 
@@ -140,7 +142,7 @@ void VK_TransitionDepthTexture(VkCommandBuffer cmd, VkImage image,
 const char *vk_instance_layers[] = {
     "VK_LAYER_KHRONOS_validation",
 };
-const unsigned vk_instance_layer_count = 0;
+const unsigned vk_instance_layer_count = 1;
 
 const char *vk_instance_extensions[] = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME};
 const unsigned vk_instance_extension_count = 1;
@@ -833,7 +835,7 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
 
   // Create the descriptor set holding all freaking textures
   {
-    unsigned max_bindless_resources = 256;
+    unsigned max_bindless_resources = 2048;
     // Create bindless descriptor pool
     VkDescriptorPoolSize pool_sizes_bindless[] = {
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, max_bindless_resources},
@@ -884,8 +886,9 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
 
     vkCreateDescriptorSetLayout(rend->device, &layout_info, NULL,
                                 &rend->global_textures_desc_set_layout);
-    unsigned max_binding = max_bindless_resources - 1;
-    VkDescriptorSetVariableDescriptorCountAllocateInfoEXT count_info = {
+
+    unsigned max_binding = 1024;
+    VkDescriptorSetVariableDescriptorCountAllocateInfo count_info = {
         .sType =
             VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO,
         .descriptorSetCount = 1,
@@ -900,8 +903,23 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
         .pNext = &count_info,
     };
 
-    vkAllocateDescriptorSets(rend->device, &global_textures_desc_info,
-                             &rend->global_textures_desc_set);
+    VkResult r = vkAllocateDescriptorSets(
+        rend->device, &global_textures_desc_info, &rend->map_textures_desc_set);
+    if (r != VK_SUCCESS) {
+      printf("[ERROR] vkAllocateDescriptorSets(rend->map_textures_desc_set)"
+             "failed. Error code: %d\n",
+             r);
+      VK_PUSH_ERROR("oh no\n");
+    }
+
+    r = vkAllocateDescriptorSets(rend->device, &global_textures_desc_info,
+                                 &rend->font_textures_desc_set);
+    if (r != VK_SUCCESS) {
+      printf("[ERROR] vkAllocateDescriptorSets(rend->font_textures_desc_set) "
+             "failed. Error code: %d\n",
+             r);
+      VK_PUSH_ERROR("oh no\n");
+    }
   }
 
   if (!VK_InitECS(rend, 3000)) {
@@ -917,8 +935,8 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
     VK_PUSH_ERROR("Couldn't create a specific pipeline: Immediate.");
   }
 
-  rend->assets.handle_capacity = 16;
-  rend->assets.handles = calloc(16, sizeof(vk_texture_handle_t));
+  rend->immediate_handle_capacity = 16;
+  rend->immediate_handles = calloc(16, sizeof(vk_texture_handle_t));
 
   return rend;
 }
@@ -1171,24 +1189,35 @@ void VK_DestroyRend(vk_rend_t *rend) {
   VK_DestroyGBuffer(rend);
   VK_DestroyECS(rend);
 
-  for (unsigned h = 0; h < rend->assets.handle_count; h++) {
-    vmaDestroyBuffer(rend->allocator, rend->assets.handles[h].staging,
-                     rend->assets.handles[h].staging_alloc);
+  for (unsigned h = 0; h < rend->immediate_handle_count; h++) {
+    vmaDestroyBuffer(rend->allocator, rend->immediate_handles[h].staging,
+                     rend->immediate_handles[h].staging_alloc);
 
-    vkDestroyImageView(rend->device, rend->assets.handles[h].image_view, NULL);
+    vkDestroyImageView(rend->device, rend->immediate_handles[h].image_view,
+                       NULL);
 
-    vmaDestroyImage(rend->allocator, rend->assets.handles[h].image,
-                    rend->assets.handles[h].image_alloc);
+    vmaDestroyImage(rend->allocator, rend->immediate_handles[h].image,
+                    rend->immediate_handles[h].image_alloc);
   }
 
-  for (unsigned i = 0; i < rend->assets.texture_count; i++) {
-    vmaDestroyBuffer(rend->allocator, rend->assets.textures_staging[i],
-                     rend->assets.textures_staging_allocs[i]);
+  for (unsigned i = 0; i < rend->map_assets.texture_count; i++) {
+    vmaDestroyBuffer(rend->allocator, rend->map_assets.textures_staging[i],
+                     rend->map_assets.textures_staging_allocs[i]);
 
-    vkDestroyImageView(rend->device, rend->assets.texture_views[i], NULL);
+    vkDestroyImageView(rend->device, rend->map_assets.texture_views[i], NULL);
 
-    vmaDestroyImage(rend->allocator, rend->assets.textures[i],
-                    rend->assets.textures_allocs[i]);
+    vmaDestroyImage(rend->allocator, rend->map_assets.textures[i],
+                    rend->map_assets.textures_allocs[i]);
+  }
+
+  for (unsigned i = 0; i < rend->font_assets.texture_count; i++) {
+    vmaDestroyBuffer(rend->allocator, rend->font_assets.textures_staging[i],
+                     rend->font_assets.textures_staging_allocs[i]);
+
+    vkDestroyImageView(rend->device, rend->font_assets.texture_views[i], NULL);
+
+    vmaDestroyImage(rend->allocator, rend->font_assets.textures[i],
+                    rend->font_assets.textures_allocs[i]);
   }
 
   for (int i = 0; i < 3; i++) {
@@ -1247,16 +1276,17 @@ void VK_DestroyRend(vk_rend_t *rend) {
 
 const char *VK_GetError() { return (const char *)vk_error; }
 
-void VK_CreateTexturesDescriptor(vk_rend_t *rend) {
+void VK_CreateTexturesDescriptor(vk_rend_t *rend, vk_assets_t *assets,
+                                 VkDescriptorSet dst_set) {
   // Should be "UpdateTexturesDescriptor", but how god vulkan is complicated
   // Add dynamically too
   VkWriteDescriptorSet *writes =
-      calloc(1, sizeof(VkWriteDescriptorSet) * rend->assets.texture_count);
+      calloc(1, sizeof(VkWriteDescriptorSet) * assets->texture_count);
   VkDescriptorImageInfo *image_infos =
-      calloc(1, sizeof(VkDescriptorImageInfo) * rend->assets.texture_count);
+      calloc(1, sizeof(VkDescriptorImageInfo) * assets->texture_count);
 
-  for (unsigned t = 0; t < rend->assets.texture_count; t++) {
-    VkImageView texture = rend->assets.texture_views[t];
+  for (unsigned t = 0; t < assets->texture_count; t++) {
+    VkImageView texture = assets->texture_views[t];
 
     image_infos[t].sampler = rend->linear_sampler;
     image_infos[t].imageView = texture;
@@ -1266,19 +1296,19 @@ void VK_CreateTexturesDescriptor(vk_rend_t *rend) {
     writes[t].descriptorCount = 1;
     writes[t].dstArrayElement = t; // should be something else
     writes[t].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    writes[t].dstSet = rend->global_textures_desc_set;
+    writes[t].dstSet = dst_set;
     writes[t].dstBinding = 0;
     writes[t].pImageInfo = &image_infos[t];
   }
 
-  vkUpdateDescriptorSets(rend->device, rend->assets.texture_count, writes, 0,
-                         NULL);
+  vkUpdateDescriptorSets(rend->device, assets->texture_count, writes, 0, NULL);
 
   free(writes);
   free(image_infos);
 }
 
-void VK_UploadTextures(vk_rend_t *rend, texture_t *textures, unsigned count) {
+void VK_UploadMapTextures(vk_rend_t *rend, texture_t *textures,
+                          unsigned count) {
   vkWaitForFences(rend->device, 1, &rend->transfer_fence, true, UINT64_MAX);
 
   vkResetFences(rend->device, 1, &rend->transfer_fence);
@@ -1429,12 +1459,12 @@ void VK_UploadTextures(vk_rend_t *rend, texture_t *textures, unsigned count) {
         rend->vkSetDebugUtilsObjectName(rend->device, &image_view_name);
       }
     }
-    rend->assets.textures = vk_textures;
-    rend->assets.textures_allocs = texture_allocs;
-    rend->assets.textures_staging = stagings;
-    rend->assets.textures_staging_allocs = staging_allocs;
-    rend->assets.texture_count = count;
-    rend->assets.texture_views = texture_views;
+    rend->map_assets.textures = vk_textures;
+    rend->map_assets.textures_allocs = texture_allocs;
+    rend->map_assets.textures_staging = stagings;
+    rend->map_assets.textures_staging_allocs = staging_allocs;
+    rend->map_assets.texture_count = count;
+    rend->map_assets.texture_views = texture_views;
   }
   vkEndCommandBuffer(cmd);
 
@@ -1446,7 +1476,387 @@ void VK_UploadTextures(vk_rend_t *rend, texture_t *textures, unsigned count) {
 
   vkQueueSubmit(rend->graphics_queue, 1, &submit_info, rend->transfer_fence);
 
-  VK_CreateTexturesDescriptor(rend);
+  VK_CreateTexturesDescriptor(rend, &rend->map_assets,
+                              rend->map_textures_desc_set);
+}
+
+void VK_UploadFontTextures(vk_rend_t *rend, texture_t *textures,
+                           unsigned count) {
+  vkWaitForFences(rend->device, 1, &rend->transfer_fence, true, UINT64_MAX);
+
+  vkResetFences(rend->device, 1, &rend->transfer_fence);
+
+  VkCommandBuffer cmd = rend->transfer_command_buffer;
+  VkCommandBufferBeginInfo begin_info = {
+      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+      .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+  };
+
+  vkBeginCommandBuffer(cmd, &begin_info);
+
+  // Work with all textures and the related global descriptor
+  {
+    VkImage *vk_textures = malloc(sizeof(VkImage) * count);
+    VmaAllocation *texture_allocs = malloc(sizeof(VmaAllocation) * count);
+
+    VkImageView *texture_views = malloc(sizeof(VkImageView) * count);
+
+    VkBuffer *stagings = malloc(sizeof(VkBuffer) * count);
+    VmaAllocation *staging_allocs = malloc(sizeof(VmaAllocation) * count);
+
+    for (size_t t = 0; t < count; t++) {
+      texture_t *texture = &textures[t];
+      VkExtent3D extent = {
+          .width = texture->width,
+          .height = texture->height,
+          .depth = 1,
+      };
+      VkImageCreateInfo tex_info = {
+          .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+          .imageType = VK_IMAGE_TYPE_2D,
+          .format = VK_FORMAT_R8_UINT,
+          .extent = extent,
+          .mipLevels = 1,
+          .arrayLayers = 1,
+          .samples = VK_SAMPLE_COUNT_1_BIT,
+          .tiling = VK_IMAGE_TILING_OPTIMAL,
+          .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+      };
+      VmaAllocationCreateInfo tex_alloc_info = {.usage =
+                                                    VMA_MEMORY_USAGE_GPU_ONLY};
+
+      vmaCreateImage(rend->allocator, &tex_info, &tex_alloc_info,
+                     &vk_textures[t], &texture_allocs[t], NULL);
+
+      // Change layout of this image
+      VkImageSubresourceRange range;
+      range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      range.baseMipLevel = 0;
+      range.levelCount = 1;
+      range.baseArrayLayer = 0;
+      range.layerCount = 1;
+
+      VkImageMemoryBarrier image_barrier_1 = {
+          .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+          .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+          .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+          .image = vk_textures[t],
+          .subresourceRange = range,
+          .srcAccessMask = 0,
+          .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+      };
+
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL,
+                           1, &image_barrier_1);
+
+      // CREATE, MAP
+      VkBufferCreateInfo staging_info = {
+          .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+          .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+          .size = texture->width * texture->height,
+      };
+
+      VmaAllocationCreateInfo staging_alloc_info = {
+          .usage = VMA_MEMORY_USAGE_CPU_TO_GPU,
+      };
+
+      vmaCreateBuffer(rend->allocator, &staging_info, &staging_alloc_info,
+                      &stagings[t], &staging_allocs[t], NULL);
+
+      void *data;
+      vmaMapMemory(rend->allocator, staging_allocs[t], &data);
+      memcpy(data, texture->data, texture->width * texture->height);
+      vmaUnmapMemory(rend->allocator, staging_allocs[t]);
+
+      // COPY
+      VkBufferImageCopy copy_region = {
+          .bufferOffset = 0,
+          .bufferRowLength = 0,
+          .bufferImageHeight = 0,
+          .imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+          .imageSubresource.mipLevel = 0,
+          .imageSubresource.baseArrayLayer = 0,
+          .imageSubresource.layerCount = 1,
+          .imageExtent = extent,
+      };
+
+      vkCmdCopyBufferToImage(cmd, stagings[t], vk_textures[t],
+                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                             &copy_region);
+
+      image_barrier_1.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+      image_barrier_1.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      image_barrier_1.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      image_barrier_1.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, NULL, 0,
+                           NULL, 1, &image_barrier_1);
+
+      // Create image view and sampler
+      // Almost there
+      VkImageViewCreateInfo image_view_info = {
+          .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+          .viewType = VK_IMAGE_VIEW_TYPE_2D,
+          .format = VK_FORMAT_R8_UINT,
+          .components =
+              {
+                  .r = VK_COMPONENT_SWIZZLE_IDENTITY,
+                  .g = VK_COMPONENT_SWIZZLE_IDENTITY,
+                  .b = VK_COMPONENT_SWIZZLE_IDENTITY,
+                  .a = VK_COMPONENT_SWIZZLE_IDENTITY,
+              },
+          .subresourceRange =
+              {
+                  .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                  .baseMipLevel = 0,
+                  .levelCount = 1,
+                  .baseArrayLayer = 0,
+                  .layerCount = 1,
+              },
+          .image = vk_textures[t],
+      };
+
+      vkCreateImageView(rend->device, &image_view_info, NULL,
+                        &texture_views[t]);
+    }
+    rend->font_assets.textures = vk_textures;
+    rend->font_assets.textures_allocs = texture_allocs;
+    rend->font_assets.textures_staging = stagings;
+    rend->font_assets.textures_staging_allocs = staging_allocs;
+    rend->font_assets.texture_count = count;
+    rend->font_assets.texture_views = texture_views;
+  }
+  vkEndCommandBuffer(cmd);
+
+  VkSubmitInfo submit_info = {
+      .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+      .commandBufferCount = 1,
+      .pCommandBuffers = &rend->transfer_command_buffer,
+  };
+
+  vkQueueSubmit(rend->graphics_queue, 1, &submit_info, rend->transfer_fence);
+
+  VK_CreateTexturesDescriptor(rend, &rend->font_assets,
+                              rend->font_textures_desc_set);
+}
+
+void VK_UpdateFontTextures(vk_rend_t *rend, texture_t *textures,
+                           unsigned count) {
+  vkWaitForFences(rend->device, 1, &rend->transfer_fence, true, UINT64_MAX);
+
+  vkResetFences(rend->device, 1, &rend->transfer_fence);
+
+  VkCommandBuffer cmd = rend->transfer_command_buffer;
+  VkCommandBufferBeginInfo begin_info = {
+      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+      .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+  };
+
+  vkBeginCommandBuffer(cmd, &begin_info);
+
+  // Work with all textures and the related global descriptor
+  {
+    VkImage *vk_textures = malloc(sizeof(VkImage) * count);
+    VmaAllocation *texture_allocs = malloc(sizeof(VmaAllocation) * count);
+
+    VkImageView *texture_views = malloc(sizeof(VkImageView) * count);
+
+    VkBuffer *stagings = malloc(sizeof(VkBuffer) * count);
+    VmaAllocation *staging_allocs = malloc(sizeof(VmaAllocation) * count);
+
+    for (size_t t = 0; t < count; t++) {
+      texture_t *texture = &textures[t];
+      VkExtent3D extent = {
+          .width = texture->width,
+          .height = texture->height,
+          .depth = 1,
+      };
+      
+      VkImageCreateInfo tex_info = {
+          .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+          .imageType = VK_IMAGE_TYPE_2D,
+          .format = VK_FORMAT_R8_UINT,
+          .extent = extent,
+          .mipLevels = 1,
+          .arrayLayers = 1,
+          .samples = VK_SAMPLE_COUNT_1_BIT,
+          .tiling = VK_IMAGE_TILING_OPTIMAL,
+          .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+      };
+      VmaAllocationCreateInfo tex_alloc_info = {.usage =
+                                                    VMA_MEMORY_USAGE_GPU_ONLY};
+
+      vmaCreateImage(rend->allocator, &tex_info, &tex_alloc_info,
+                     &vk_textures[t], &texture_allocs[t], NULL);
+
+      // Change layout of this image
+      VkImageSubresourceRange range;
+      range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      range.baseMipLevel = 0;
+      range.levelCount = 1;
+      range.baseArrayLayer = 0;
+      range.layerCount = 1;
+
+      VkImageMemoryBarrier image_barrier_1 = {
+          .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+          .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+          .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+          .image = vk_textures[t],
+          .subresourceRange = range,
+          .srcAccessMask = 0,
+          .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+      };
+
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL,
+                           1, &image_barrier_1);
+
+      // CREATE, MAP
+      VkBufferCreateInfo staging_info = {
+          .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+          .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+          .size = texture->width * texture->height,
+      };
+
+      VmaAllocationCreateInfo staging_alloc_info = {
+          .usage = VMA_MEMORY_USAGE_CPU_TO_GPU,
+      };
+
+      vmaCreateBuffer(rend->allocator, &staging_info, &staging_alloc_info,
+                      &stagings[t], &staging_allocs[t], NULL);
+
+      void *data;
+      vmaMapMemory(rend->allocator, staging_allocs[t], &data);
+      memcpy(data, texture->data, texture->width * texture->height);
+      vmaUnmapMemory(rend->allocator, staging_allocs[t]);
+
+      // COPY
+      VkBufferImageCopy copy_region = {
+          .bufferOffset = 0,
+          .bufferRowLength = 0,
+          .bufferImageHeight = 0,
+          .imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+          .imageSubresource.mipLevel = 0,
+          .imageSubresource.baseArrayLayer = 0,
+          .imageSubresource.layerCount = 1,
+          .imageExtent = extent,
+      };
+
+      vkCmdCopyBufferToImage(cmd, stagings[t], vk_textures[t],
+                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                             &copy_region);
+
+      image_barrier_1.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+      image_barrier_1.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      image_barrier_1.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      image_barrier_1.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, NULL, 0,
+                           NULL, 1, &image_barrier_1);
+
+      // Create image view and sampler
+      // Almost there
+      VkImageViewCreateInfo image_view_info = {
+          .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+          .viewType = VK_IMAGE_VIEW_TYPE_2D,
+          .format = VK_FORMAT_R8_UINT,
+          .components =
+              {
+                  .r = VK_COMPONENT_SWIZZLE_IDENTITY,
+                  .g = VK_COMPONENT_SWIZZLE_IDENTITY,
+                  .b = VK_COMPONENT_SWIZZLE_IDENTITY,
+                  .a = VK_COMPONENT_SWIZZLE_IDENTITY,
+              },
+          .subresourceRange =
+              {
+                  .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                  .baseMipLevel = 0,
+                  .levelCount = 1,
+                  .baseArrayLayer = 0,
+                  .layerCount = 1,
+              },
+          .image = vk_textures[t],
+      };
+
+      vkCreateImageView(rend->device, &image_view_info, NULL,
+                        &texture_views[t]);
+    }
+
+    unsigned off = rend->font_assets.texture_count;
+
+    rend->font_assets.textures =
+        realloc(rend->font_assets.textures, sizeof(VkImage) * (off + count));
+    rend->font_assets.textures_allocs =
+        realloc(rend->font_assets.textures_allocs,
+                sizeof(VmaAllocation) * (off + count));
+    rend->font_assets.textures_staging = realloc(
+        rend->font_assets.textures_staging, sizeof(VkBuffer) * (off + count));
+    rend->font_assets.textures_staging_allocs =
+        realloc(rend->font_assets.textures_staging_allocs,
+                sizeof(VmaAllocation) * (off + count));
+    rend->font_assets.texture_views = realloc(
+        rend->font_assets.texture_views, sizeof(VkImageView) * (off + count));
+
+    for (unsigned pp = 0; pp < count; pp++) {
+      rend->font_assets.textures[off + pp] = vk_textures[pp];
+      rend->font_assets.textures_allocs[off + pp] = texture_allocs[pp];
+      rend->font_assets.textures_staging[off + pp] = stagings[pp];
+      rend->font_assets.textures_staging_allocs[off + pp] = staging_allocs[pp];
+      rend->font_assets.texture_views[off + pp] = texture_views[pp];
+    }
+
+    free(vk_textures);
+    free(texture_allocs);
+    free(stagings);
+    free(staging_allocs);
+    free(texture_views);
+
+    rend->font_assets.texture_count += count;
+  }
+  vkEndCommandBuffer(cmd);
+
+  VkSubmitInfo submit_info = {
+      .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+      .commandBufferCount = 1,
+      .pCommandBuffers = &rend->transfer_command_buffer,
+  };
+
+  vkQueueSubmit(rend->graphics_queue, 1, &submit_info, rend->transfer_fence);
+
+  VkWriteDescriptorSet *writes =
+      calloc(1, sizeof(VkWriteDescriptorSet) * count);
+  VkDescriptorImageInfo *image_infos =
+      calloc(1, sizeof(VkDescriptorImageInfo) * count);
+
+  unsigned i = 0;
+  for (unsigned t = rend->font_assets.texture_count - count;
+       t < rend->font_assets.texture_count; t++) {
+    VkImageView texture = rend->font_assets.texture_views[t];
+
+    image_infos[i].sampler = rend->linear_sampler;
+    image_infos[i].imageView = texture;
+    image_infos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[i].descriptorCount = 1;
+    writes[i].dstArrayElement = t; // should be something else
+    writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[i].dstSet = rend->font_textures_desc_set;
+    writes[i].dstBinding = 0;
+    writes[i].pImageInfo = &image_infos[i];
+    i++;
+  }
+
+  printf("count = %d, texture_count = %d\n", count,
+         rend->font_assets.texture_count);
+
+  vkUpdateDescriptorSets(rend->device, count, writes, 0, NULL);
+
+  free(writes);
+  free(image_infos);
 }
 
 void VK_UploadSingleTexture(vk_rend_t *rend, texture_t *texture) {
@@ -1602,18 +2012,18 @@ void VK_UploadSingleTexture(vk_rend_t *rend, texture_t *texture) {
 
   vkQueueSubmit(rend->graphics_queue, 1, &submit_info, rend->transfer_fence);
 
-  if (rend->assets.handle_count >= rend->assets.handle_capacity) {
-    rend->assets.handles =
-        realloc(rend->assets.handles,
-                sizeof(vk_texture_handle_t) * 2 * rend->assets.handle_capacity);
+  if (rend->immediate_handle_count >= rend->immediate_handle_capacity) {
+    rend->immediate_handles =
+        realloc(rend->immediate_handles, sizeof(vk_texture_handle_t) * 2 *
+                                             rend->immediate_handle_capacity);
 
-    rend->assets.handle_capacity *= 2;
+    rend->immediate_handle_capacity *= 2;
   }
 
-  texture->handle = rend->assets.handle_count;
-  rend->assets.handle_count++;
+  texture->handle = rend->immediate_handle_count;
+  rend->immediate_handle_count++;
 
-  rend->assets.handles[texture->handle] = (vk_texture_handle_t){
+  rend->immediate_handles[texture->handle] = (vk_texture_handle_t){
       .image = vk_image,
       .image_alloc = vk_image_alloc,
       .image_view = vk_image_view,

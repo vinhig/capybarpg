@@ -387,7 +387,7 @@ void VK_DrawGBuffer(vk_rend_t *rend) {
 
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                           rend->gbuffer->pipeline_layout, 1, 1,
-                          &rend->global_textures_desc_set, 0, NULL);
+                          &rend->map_textures_desc_set, 0, NULL);
 
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                           rend->gbuffer->pipeline_layout, 2, 1,

@@ -9,6 +9,7 @@ dl = cc.find_library('dl', required : false)
 
 sdl2 = dependency('SDL2')
 opengl = dependency('GL')
+freetype = dependency('freetype2')
 
 if build_machine.system() == 'darwin'
     molten_dirs = []
@@ -25,6 +26,8 @@ shaders = [
   'source/shaders/gbuffer.frag.glsl',
   'source/shaders/immediate.vert.glsl',
   'source/shaders/immediate.frag.glsl',
+  'source/shaders/text.vert.glsl',
+  'source/shaders/text.frag.glsl',
   # 'source/shaders/shading.comp.glsl',
   'source/shaders/systems/model_matrix_frustum.comp.glsl',
   # 'source/shaders/systems/path_finding.comp.glsl',
@@ -113,6 +116,7 @@ exe = executable('maidenless',
   'source/maidenless.c',
 
   'source/client/cl_client.c',
+  'source/client/cl_console.c',
 
   'source/game/g_game.c',
   'source/game/g_data.c',
@@ -141,4 +145,5 @@ exe = executable('maidenless',
     include_directories('external/qclib/')
   ],
   link_with: [qcvm],
-  dependencies: [sdl2, opengl, vulkan, dl, m, shaders, images])
+  dependencies: [sdl2, opengl, vulkan, freetype, dl, m, shaders, images]
+)

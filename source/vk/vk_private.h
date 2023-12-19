@@ -150,6 +150,18 @@ typedef struct vk_immediate_t {
   VkDescriptorSetLayout immediate_layout;
 } vk_immediate_t;
 
+typedef struct vk_text_t {
+  VkPipelineLayout pipeline_layout;
+  VkPipeline pipeline;
+
+  VkDescriptorSetLayout text_layout;
+  VkDescriptorSet text_set;
+  
+  VkBuffer text_buffer;
+  VmaAllocation text_alloc;
+  void* text_data; // mapped data
+} vk_text_t;
+
 typedef struct vk_assets_t {
   // Only GPU Visible
   VkImage *textures;
@@ -160,10 +172,6 @@ typedef struct vk_assets_t {
   VmaAllocation *textures_staging_allocs;
 
   unsigned texture_count;
-
-  vk_texture_handle_t *handles;
-  unsigned handle_count;
-  unsigned handle_capacity;
 } vk_assets_t;
 
 typedef struct vk_global_ubo_t {
@@ -220,7 +228,8 @@ struct vk_rend_t {
   VkDescriptorSet global_ubo_desc_set[3];
 
   VkDescriptorSetLayout global_textures_desc_set_layout;
-  VkDescriptorSet global_textures_desc_set;
+  VkDescriptorSet map_textures_desc_set;
+  VkDescriptorSet font_textures_desc_set;
 
   VkBuffer global_buffers[3];
   VmaAllocation global_allocs[3];
@@ -231,8 +240,14 @@ struct vk_rend_t {
 
   vk_gbuffer_t *gbuffer;
   vk_immediate_t *immediate;
+  vk_text_t *text;
   vk_ecs_t *ecs;
-  vk_assets_t assets;
+  vk_assets_t map_assets;
+  vk_assets_t font_assets;
+
+  vk_texture_handle_t *immediate_handles;
+  unsigned immediate_handle_count;
+  unsigned immediate_handle_capacity;
 
   VmaAllocator allocator;
 
