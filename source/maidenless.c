@@ -47,14 +47,14 @@ int main(int argc, char **argv) {
 
   game_state_t state;
   unsigned frame = 0;
-  
+
   while ((CL_GetClientState(client) != CLIENT_DESTROYING) &&
          CL_GetClientState(client) != CLIENT_QUITTING) {
-    CL_UpdateClient(client);
     if (CL_GetClientState(client) != CLIENT_PAUSED || frame == 0) {
       state = G_TickGame(client, game);
     }
     CL_DrawClient(client, &state);
+    CL_UpdateClient(client);
     frame++;
   }
   G_DestroyGame(game);

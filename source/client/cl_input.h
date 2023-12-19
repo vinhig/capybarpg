@@ -1,5 +1,7 @@
 #pragma once
 
+#include <wchar.h>
+
 typedef struct client_t client_t;
 
 /**
@@ -25,6 +27,10 @@ typedef struct input_t {
     float x_axis;
     float y_axis;
   } view;
+
+  struct {
+    wchar_t content[128];
+  } text_editing;
 
   unsigned mouse_x;
   unsigned mouse_y;

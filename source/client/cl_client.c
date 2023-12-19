@@ -1,9 +1,13 @@
 #include "cl_client.h"
+#include "SDL_events.h"
+#include "SDL_keycode.h"
 #include "cl_input.h"
 #include "vk/vk_vulkan.h"
 
 #include <SDL2/SDL.h>
 #include <stdbool.h>
+#include <stdlib.h>
+#include <wchar.h>
 
 #include "game/g_game.h"
 
@@ -191,7 +195,18 @@ void CL_UpdateClient(client_t *client) {
           // keyboard)
           printf("[VERBOSE] Closing console.\n");
           CL_ToggleConsole(client->console);
+          SDL_StopTextInput();
+        } else if (event.key.keysym.sym == SDLK_BACKSPACE) {
+          client->input.text_editing
+              .content[wcslen(client->input.text_editing.content) - 1] = L'\0';
         }
+        break;
+      }
+      case SDL_TEXTINPUT: {
+        wchar_t temp[32];
+        mbstowcs(&temp[0], event.text.text, 32);
+
+        wcscat(client->input.text_editing.content, &temp[0]);
         break;
       }
       }
@@ -267,6 +282,7 @@ void CL_UpdateClient(client_t *client) {
           // keyboard)
           printf("[VERBOSE] Opening console.\n");
           CL_ToggleConsole(client->console);
+          SDL_StartTextInput();
         }
 
         break;

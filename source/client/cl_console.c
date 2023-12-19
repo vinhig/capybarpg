@@ -1,4 +1,5 @@
 #include "client/cl_client.h"
+#include "client/cl_input.h"
 #include "game/g_game.h"
 #include "vk/vk_vulkan.h"
 
@@ -27,7 +28,6 @@ ZPL_TABLE_DEFINE(character_bank_t, CL_Characters_, character_t)
 
 typedef struct client_console_t {
   char *history;
-  wchar_t current_cmd[256];
 
   bool opened;
 
@@ -77,7 +77,8 @@ bool CL_InitConsole(client_t *client, client_console_t **c) {
                        L"{}:/+-_*12345789おはよう!?èé&#<>\\\"ùàç ";
 
   for (unsigned i = 0; i < sizeof(alphabet) / sizeof(wchar_t); i++) {
-    if (FT_Load_Char(console->source_code_face, alphabet[i], FT_LOAD_RENDER | FT_LOAD_COLOR)) {
+    if (FT_Load_Char(console->source_code_face, alphabet[i],
+                     FT_LOAD_RENDER | FT_LOAD_COLOR)) {
       printf("[WARNING] Ooopsie doopsie, the char `%lc` isn't supported...\n",
              alphabet[i]);
     }
@@ -119,16 +120,18 @@ bool CL_InitConsole(client_t *client, client_console_t **c) {
   VK_UploadFontTextures(CL_GetRend(client), console->textures,
                         console->texture_count);
 
-  memcpy(console->current_cmd,
-         L"add_wall 3 3 concrete_wall //おはよう! さようなら?",
-         42 * sizeof(wchar_t));
-
   return true;
 }
 
 void CL_DrawConsole(client_t *client, game_state_t *state,
                     client_console_t *console) {
-  unsigned len = wcslen(console->current_cmd);
+  if (!console->opened) {
+    return;
+  }
+
+  wchar_t* cmd = &CL_GetInput(client)->text_editing.content[0];
+
+  unsigned len = wcslen(cmd);
 
   float current_pos = 0.0f;
 
@@ -141,7 +144,7 @@ void CL_DrawConsole(client_t *client, game_state_t *state,
 
   for (unsigned i = 0; i < len; i++) {
     character_t *character =
-        CL_Characters_get(&console->character_bank, console->current_cmd[i]);
+        CL_Characters_get(&console->character_bank, cmd[i]);
 
     unsigned screen_width, screen_height;
     CL_GetViewDim(client, &screen_width, &screen_height);
@@ -149,10 +152,10 @@ void CL_DrawConsole(client_t *client, game_state_t *state,
     // We didn't load all possible characters, maybe it's a new one, let's load
     // it
     if (!character) {
-      if (FT_Load_Char(console->source_code_face, console->current_cmd[i],
+      if (FT_Load_Char(console->source_code_face, cmd[i],
                        FT_LOAD_RENDER | FT_LOAD_COLOR)) {
         printf("[WARNING] Ooopsie doopsie, a char `%lc` isn't supported...\n",
-               console->current_cmd[i]);
+               cmd[i]);
       }
 
       FT_GlyphSlot the_glyph = console->source_code_face->glyph;
@@ -175,7 +178,7 @@ void CL_DrawConsole(client_t *client, game_state_t *state,
 
       new_texture_count++;
 
-      CL_Characters_set(&console->character_bank, console->current_cmd[i],
+      CL_Characters_set(&console->character_bank, cmd[i],
                         (character_t){
                             console->texture_count,
                             {
@@ -192,7 +195,7 @@ void CL_DrawConsole(client_t *client, game_state_t *state,
       console->texture_count++;
 
       character =
-          CL_Characters_get(&console->character_bank, console->current_cmd[i]);
+          CL_Characters_get(&console->character_bank, cmd[i]);
     }
 
     state->texts[i].color[0] = 1.0;
