@@ -126,7 +126,7 @@ bool VK_InitImmediate(vk_rend_t *rend) {
   // previously.
   {
     VkShaderModule vertex_shader =
-        VK_LoadShaderModule(rend, "immediate.vert.spv");
+        VK_LoadShaderModule(rend, "../test.spv");
     if (!vertex_shader) {
       printf("Couldn't create vertex shader module from "
              "`immediate.vert.spv`.\n");

@@ -492,6 +492,7 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
 
     VkPhysicalDeviceFeatures vulkan = {
         .samplerAnisotropy = VK_TRUE,
+        .shaderInt64 = VK_TRUE,
     };
 
     VkPhysicalDeviceVulkan11Features vulkan_11 = {
@@ -509,6 +510,7 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
         .runtimeDescriptorArray = VK_TRUE,
         .descriptorIndexing = VK_TRUE,
         .bufferDeviceAddress = VK_TRUE,
+        .shaderInt8 = VK_TRUE,
         .pNext = &vulkan_11,
     };
 

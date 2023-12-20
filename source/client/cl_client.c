@@ -196,6 +196,8 @@ void CL_UpdateClient(client_t *client) {
           printf("[VERBOSE] Closing console.\n");
           CL_ToggleConsole(client->console);
           SDL_StopTextInput();
+          memset(&client->input.text_editing.content[0], 0,
+                 sizeof(client->input.text_editing.content));
         } else if (event.key.keysym.sym == SDLK_BACKSPACE) {
           client->input.text_editing
               .content[wcslen(client->input.text_editing.content) - 1] = L'\0';

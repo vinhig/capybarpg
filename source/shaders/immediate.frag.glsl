@@ -2,8 +2,7 @@
 
 #extension GL_EXT_nonuniform_qualifier : require
 
-layout(location = 0) in vec3 o_color;
-layout(location = 1) in vec2 vtx_uv;
+layout(location = 0) in vec2 vtx_uv;
 
 // output write
 layout(location = 0) out vec4 o_albedo;
