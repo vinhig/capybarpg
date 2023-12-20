@@ -1,2 +1,7 @@
 compile_commands.json
 .cache/
+test.frag.spv
+test.spv
+test.vert.spv
+text.vert.spv
+text.frag.spv

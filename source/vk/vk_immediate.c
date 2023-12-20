@@ -126,14 +126,14 @@ bool VK_InitImmediate(vk_rend_t *rend) {
   // previously.
   {
     VkShaderModule vertex_shader =
-        VK_LoadShaderModule(rend, "../test.spv");
+        VK_LoadShaderModule(rend, "../test.vert.spv");
     if (!vertex_shader) {
       printf("Couldn't create vertex shader module from "
              "`immediate.vert.spv`.\n");
       return false;
     }
     VkShaderModule fragment_shader =
-        VK_LoadShaderModule(rend, "immediate.frag.spv");
+        VK_LoadShaderModule(rend, "../test.frag.spv");
     if (!fragment_shader) {
       printf("Couldn't create vertex shader module from "
              "`immediate.frag.spv`.\n");

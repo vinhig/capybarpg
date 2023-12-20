@@ -921,8 +921,6 @@ void G_WorkerLoadTexture(void *data) {
   game->texture_count++;
 
   zpl_mutex_unlock(&game->texture_mutex);
-
-  zpl_sleep(1);
 }
 
 void G_Load_Game(worker_t *worker) {
