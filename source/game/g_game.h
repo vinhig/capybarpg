@@ -43,8 +43,9 @@ typedef struct game_state_t {
 
   // This is updated by the console
   // but stored in game state
-  game_text_draw_t texts[1024];
+  game_text_draw_t *texts;
   unsigned text_count;
+  unsigned text_capacity;
 
 } game_state_t;
 

@@ -211,7 +211,6 @@ void CL_UpdateClient(client_t *client) {
         if (event.key.keysym.sym == 178) {
           // The little ² at the upper left of your keyboard (assuming an AZERTY
           // keyboard)
-          printf("[VERBOSE] Closing console.\n");
           CL_ToggleConsole(client->console);
           SDL_StopTextInput();
           memset(&client->input.text_editing.content[0], 0,
@@ -302,7 +301,6 @@ void CL_UpdateClient(client_t *client) {
         if (event.key.keysym.sym == 178) {
           // The little ² at the upper left of your keyboard (assuming an AZERTY
           // keyboard)
-          printf("[VERBOSE] Opening console.\n");
           CL_ToggleConsole(client->console);
           SDL_StartTextInput();
         }
@@ -327,6 +325,8 @@ void CL_DrawClient(client_t *client, game_state_t *state) {
   CL_DrawConsole(client, state, client->console);
   VK_Draw(client->rend, state);
 }
+
+void CL_ExitClient(client_t *client) { client->state = CLIENT_QUITTING; }
 
 void CL_DestroyClient(client_t *client) {
   CL_DestroyConsole(client, client->console);

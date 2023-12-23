@@ -868,6 +868,10 @@ void VK_DestroyECS(vk_rend_t *rend) {
   vkDestroyDescriptorSetLayout(rend->device, rend->ecs->instance_layout, NULL);
 
   vkDestroyDescriptorSetLayout(rend->device, rend->ecs->ecs_layout, NULL);
+
+  free(rend->ecs->writes);
+
+  free(rend->ecs);
 }
 
 void VK_TickSystems(vk_rend_t *rend) {

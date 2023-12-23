@@ -1,3 +1,5 @@
+#include "game/g_game.h"
+#include "vk/vk_vulkan.h"
 #include <client/cl_input.h>
 #include <game/g_private.h>
 
@@ -9,7 +11,7 @@
 #include <time.h>
 #include <unistd.h>
 
-extern const char no_image[];
+extern const unsigned char no_image[];
 extern const unsigned no_image_size;
 
 game_t *G_CreateGame(client_t *client, char *base) {
@@ -33,7 +35,6 @@ game_t *G_CreateGame(client_t *client, char *base) {
   zpl_affinity_init(&af);
   // The workers[0] is actually the main thread ok?
   game->worker_count = (af.thread_count / 2) + 1;
-  printf("[VERBOSE] We'll work with 1 + %d workers.\n", game->worker_count - 1);
 
   zpl_jobs_init_with_limit(&game->job_sys, zpl_heap_allocator(),
                            game->worker_count, 10000);
@@ -63,9 +64,82 @@ game_t *G_CreateGame(client_t *client, char *base) {
 }
 
 void G_DestroyGame(game_t *game) {
-  for (unsigned i = 0; i < 8; i++) {
+  for (unsigned i = 0; i < zpl_array_count(game->material_bank.entries); i++) {
+    material_bank_tEntry *entry = &game->material_bank.entries[i];
+    free(entry->value.full_stack_path);
+    free(entry->value.half_stack_path);
+    free(entry->value.low_stack_path);
+    free(entry->value.name);
   }
+
+  for (unsigned i = 0;
+       i < zpl_array_count(game->immediate_texture_bank.entries); i++) {
+    texture_bank_tEntry *entry = &game->immediate_texture_bank.entries[i];
+    free(entry->value.label);
+    free(entry->value.data);
+  }
+
+  for (unsigned i = 0; i < zpl_array_count(game->wall_bank.entries); i++) {
+    wall_bank_tEntry *entry = &game->wall_bank.entries[i];
+    free(entry->value.only_left_path);
+    free(entry->value.only_right_path);
+    free(entry->value.only_top_path);
+    free(entry->value.only_bottom_path);
+    free(entry->value.all_path);
+    free(entry->value.left_right_bottom_path);
+    free(entry->value.left_right_path);
+    free(entry->value.left_right_top_path);
+    free(entry->value.top_bottom_path);
+    free(entry->value.right_top_path);
+    free(entry->value.left_top_path);
+    free(entry->value.right_bottom_path);
+    free(entry->value.left_bottom_path);
+    free(entry->value.left_top_bottom_path);
+    free(entry->value.right_top_bottom_path);
+    free(entry->value.nothing_path);
+    free(entry->value.name);
+  }
+
+  for (unsigned i = 0; i < zpl_array_count(game->terrain_bank.entries); i++) {
+    terrain_bank_tEntry *entry = &game->terrain_bank.entries[i];
+    free(entry->value.variant1_path);
+    free(entry->value.variant2_path);
+    free(entry->value.variant3_path);
+    free(entry->value.name);
+  }
+
+  for (unsigned i = 0; i < game->scene_count; i++) {
+    free(game->scenes[i].name);
+  }
+
+  for (unsigned i = 0; i < game->texture_count; i++) {
+    texture_t *tex = &game->textures[i];
+    free(tex->data);
+    free(tex->label);
+  }
+
+  free(game->textures);
+
+  G_Materials_destroy(&game->material_bank);
+  G_ImmediateTextures_destroy(&game->immediate_texture_bank);
+  G_Walls_destroy(&game->wall_bank);
+  G_Terrains_destroy(&game->terrain_bank);
+
+  for (unsigned i = 0; i < game->worker_count; i++) {
+    // jps_destroy(game->workers[i].)
+    qcvm_free(game->workers[i].qcvm);
+  }
+
+  for (unsigned i = 0; i < game->map_count; i++) {
+    printf("clearing things....\n");
+    free(game->maps[i].cpu_tiles);
+    jps_destroy(game->maps[i].jps_map);
+  }
+
+  zpl_jobs_free(&game->job_sys);
+
   free(game->cpu_agents);
+  free(game->scenes);
   free(game);
 }
 
@@ -133,8 +207,10 @@ void G_DestroyGame(game_t *game) {
 // }
 
 void G_ResetGameState(game_t *game) {
+  game_text_draw_t *draws = game->state.texts;
   game->state.draw_count = 0;
   memset(&game->state.draws, 0, sizeof(game->state.draws));
+  game->state.texts = draws;
 }
 
 game_state_t G_TickGame(client_t *client, game_t *game) {
@@ -194,7 +270,7 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
 }
 
 texture_t G_LoadSingleTextureFromMemory(const unsigned char *pdata,
-                                        unsigned len, const char *label) {
+                                        unsigned len, char *label) {
   stbi_set_flip_vertically_on_load(true);
   int w, h, c;
   unsigned char *data = stbi_load_from_memory(pdata, len, &w, &h, &c, 4);
@@ -222,7 +298,7 @@ texture_t G_LoadSingleTexture(const char *path) {
       .data = data,
       .height = h,
       .width = w,
-      .label = path,
+      .label = memcpy(malloc(strlen(path) + 1), path, strlen(path) + 1),
   };
 }
 
@@ -236,20 +312,21 @@ int G_Create_Map(game_t *game, unsigned w, unsigned h) {
   VK_CreateMap(game->rend, w, h, game->map_count);
 
   // Init the same map accross all workers
-  for (unsigned i = 0; i < game->worker_count; i++) {
-    map_t *the_map = &game->maps[game->map_count];
-    zpl_mutex_lock(&the_map->mutex);
-    the_map->jps_map = jps_create(w, h);
-    the_map->w = w;
-    the_map->h = h;
-    the_map->gpu_tiles = VK_GetMap(game->rend, game->map_count);
-    the_map->cpu_tiles = calloc(sizeof(cpu_tile_t), w * h);
+  // for (unsigned i = 0; i < game->worker_count; i++) {
+  // TODO: the jps map should be per worker
+  map_t *the_map = &game->maps[game->map_count];
+  zpl_mutex_lock(&the_map->mutex);
+  the_map->jps_map = jps_create(w, h);
+  the_map->w = w;
+  the_map->h = h;
+  the_map->gpu_tiles = VK_GetMap(game->rend, game->map_count);
+  the_map->cpu_tiles = calloc(sizeof(cpu_tile_t), w * h);
 
-    // Set every single tile to be the default PINK texture (texture == 0)
-    // And not sure if the mapped data from the renderer is actually zeroed
-    memset(the_map->gpu_tiles, 0, w * h * sizeof(struct Tile));
-    zpl_mutex_unlock(&the_map->mutex);
-  }
+  // Set every single tile to be the default PINK texture (texture == 0)
+  // And not sure if the mapped data from the renderer is actually zeroed
+  memset(the_map->gpu_tiles, 0, w * h * sizeof(struct Tile));
+  zpl_mutex_unlock(&the_map->mutex);
+  // }
 
   if (game->current_scene->current_map == -1) {
     game->current_scene->current_map = game->map_count;
@@ -423,7 +500,7 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
             free(terrain->name);
           }
           terrain->name =
-              memcpy(malloc(strlen(name_node->string)), name_node->string,
+              memcpy(malloc(strlen(name_node->string) + 1), name_node->string,
                      strlen(name_node->string) + 1);
         }
 
@@ -501,7 +578,7 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
             free(material->name);
           }
           material->name =
-              memcpy(malloc(strlen(name_node->string)), name_node->string,
+              memcpy(malloc(strlen(name_node->string) + 1), name_node->string,
                      strlen(name_node->string) + 1);
         }
 
@@ -578,7 +655,7 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
           if (wall->name) {
             free(wall->name);
           }
-          wall->name = memcpy(malloc(strlen(name_node->string)),
+          wall->name = memcpy(malloc(strlen(name_node->string) + 1),
                               name_node->string, strlen(name_node->string) + 1);
         }
 
@@ -772,6 +849,7 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
     printf("[DEBUG] No 'walls' specified in `%s`.\n", path);
   }
 
+  free(content);
   zpl_json_free(&recipes);
   return true;
 }
@@ -931,8 +1009,9 @@ void G_Load_Game(worker_t *worker) {
   // Load the default texture, that'll have a null index (index == 0)
   // So, everytime there is an error, it'll be displayed
   // WARNING: kinda weeb stuff
-  game->textures[0] = G_LoadSingleTextureFromMemory(&no_image[0], no_image_size,
-                                                    "resources/no_image.png");
+  game->textures[0] = G_LoadSingleTextureFromMemory(
+      &no_image[0], no_image_size,
+      memcpy(malloc(23), "resources/no_image.png", 23));
   game->texture_count = 1;
 
   texture_job_t *texture_jobs =
@@ -1662,6 +1741,8 @@ bool G_Load(client_t *client, game_t *game) {
   game->transforms = VK_GetTransforms(game->rend);
 
   game->entities = VK_GetEntities(game->rend);
+
+  free(bytes);
 
   return true;
 }

@@ -33,6 +33,8 @@ typedef struct client_console_t {
   wchar_t *history_temp;
   unsigned history_size;
 
+  wchar_t *output;
+
   bool opened;
 
   // TODO: the console shouldn't own it's own copy of freetype
@@ -51,7 +53,39 @@ typedef struct client_console_t {
                     // renderer, we'll submit a dummy 64x64 black square. Its
                     // dimension/margins/etc will be copied from the "_"
                     // character.
+
+  cmd_desc_t *descriptions;
+  unsigned description_count;
+  unsigned description_capacity;
 } client_console_t;
+
+bool CL_PrintVersionConsole(client_console_t *console, void *user_data,
+                            wchar_t args[64][64], unsigned count) {
+  if (count != 0) {
+    console->output = L"CL_PrintVersionConsole accepts no argument.";
+
+    return false;
+  } else {
+    console->output = L"CapybaRPG (maidenless v0.0.1)";
+
+    return true;
+  }
+}
+
+bool CL_ExitConsole(client_console_t *console, void *user_data,
+                    wchar_t args[64][64], unsigned count) {
+  if (count != 0) {
+    console->output = L"CL_ExitConsole accepts no argument.";
+
+    return false;
+  } else {
+    console->output = L"Exiting.";
+
+    CL_ExitClient((client_t *)user_data);
+
+    return true;
+  }
+}
 
 bool CL_InitConsole(client_t *client, client_console_t **c) {
   (*c) = calloc(1, sizeof(client_console_t));
@@ -66,6 +100,10 @@ bool CL_InitConsole(client_t *client, client_console_t **c) {
   console->history = calloc(1024, sizeof(wchar_t));
   console->history_temp = calloc(1024, sizeof(wchar_t));
   console->history_size = 1024;
+
+  console->description_capacity = 16;
+  console->description_count = 0;
+  console->descriptions = calloc(16, sizeof(cmd_desc_t));
 
   if (FT_Init_FreeType(&console->ft)) {
     printf("[ERROR] Couldn't init freetype for the console.\n");
@@ -83,7 +121,7 @@ bool CL_InitConsole(client_t *client, client_console_t **c) {
   FT_Set_Pixel_Sizes(console->source_code_face, 0, 48);
 
   wchar_t alphabet[] = L"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ()"
-                       L"{}:/+-_*12345789おはよう!?èé&#<>\\\"ùàç ";
+                       L"{}:/+-_*012345789おはよう!?èé&#<>.,\\\"ùàç []";
 
   for (unsigned i = 0; i < sizeof(alphabet) / sizeof(wchar_t); i++) {
     if (FT_Load_Char(console->source_code_face, alphabet[i],
@@ -130,7 +168,32 @@ bool CL_InitConsole(client_t *client, client_console_t **c) {
   VK_UploadFontTextures(CL_GetRend(client), console->textures,
                         console->texture_count);
 
+  cmd_desc_t version_command = {
+      .command = L"version",
+      .callback = CL_PrintVersionConsole,
+  };
+  cmd_desc_t exit_command = {
+      .command = L"exit",
+      .callback = CL_ExitConsole,
+      .user_data = client,
+  };
+
+  CL_ExportCommandConsole(console, &version_command);
+  CL_ExportCommandConsole(console, &exit_command);
+
   return true;
+}
+
+void CL_ExportCommandConsole(client_console_t *console, cmd_desc_t *desc) {
+  if (console->description_capacity == console->description_count) {
+    console->descriptions =
+        realloc(console->descriptions,
+                console->description_capacity * 2 * sizeof(cmd_desc_t));
+    console->description_capacity *= 2;
+  }
+
+  console->descriptions[console->description_count] = *desc;
+  console->description_count++;
 }
 
 void CL_UpdateConsole(client_t *client, client_console_t *console) {
@@ -142,8 +205,6 @@ void CL_UpdateConsole(client_t *client, client_console_t *console) {
     wchar_t args[64][64] = {};
     unsigned arg_len[64] = {};
     unsigned arg_count = 0;
-
-    printf("executing `%ls`\n", content);
 
     for (unsigned i = 0; i < len; i++) {
       if (content[i] == L'"') {
@@ -164,22 +225,42 @@ void CL_UpdateConsole(client_t *client, client_console_t *console) {
       }
     }
 
-    arg_count++;
-
-    for (unsigned i = 0; i < arg_count; i++) {
-      printf("args[%d]: \"%ls\"\n", i, &args[i][0]);
+    if (args[arg_count][0] != L'\0') {
+      arg_count++;
     }
 
-    swprintf(console->history_temp, console->history_size,
-             L"%ls<orange>>> <white>%ls\n", console->history,
-             &CL_GetInput(client)->text_editing.content[0]);
+    console->output = NULL;
+
+    bool result = false;
+    for (unsigned c = 0; c < console->description_count; c++) {
+      if (wcscmp(console->descriptions[c].command, args[0]) == 0) {
+        result = console->descriptions[c].callback(
+            console, console->descriptions[c].user_data, args, arg_count - 1);
+      }
+    }
+
+    if (result) {
+      swprintf(console->history_temp, console->history_size,
+               L"%ls<green> >> <white>%ls\n", console->history,
+               &CL_GetInput(client)->text_editing.content[0]);
+    } else {
+      swprintf(console->history_temp, console->history_size,
+               L"%ls<red>[X] <white>%ls\n", console->history,
+               &CL_GetInput(client)->text_editing.content[0]);
+    }
 
     memcpy(console->history, console->history_temp,
            wcslen(console->history_temp) * sizeof(wchar_t));
 
-    CL_GetInput(client)->text_editing.content[0] = L'\0';
+    if (console->output) {
+      swprintf(console->history_temp, console->history_size, L"%ls<grey>%ls\n",
+               console->history, console->output);
 
-    printf("History is now:\n%ls", console->history);
+      memcpy(console->history, console->history_temp,
+             wcslen(console->history_temp) * sizeof(wchar_t));
+    }
+
+    CL_GetInput(client)->text_editing.content[0] = L'\0';
   }
 }
 
@@ -201,6 +282,15 @@ void CL_DrawConsole(client_t *client, game_state_t *state,
 
   unsigned cmd_len = wcslen(cmd);
   unsigned history_len = wcslen(console->history);
+
+  if (cmd_len + history_len >= state->text_capacity) {
+    free(state->texts);
+    state->texts = calloc(cmd_len + history_len, sizeof(game_text_draw_t));
+    state->text_capacity = cmd_len + history_len;
+  } else if (state->texts == NULL) {
+    state->texts = calloc(cmd_len + history_len, sizeof(game_text_draw_t));
+    state->text_capacity = cmd_len + history_len;
+  }
 
   float current_pos = 0.0f;
 
@@ -231,41 +321,55 @@ void CL_DrawConsole(client_t *client, game_state_t *state,
         current_color[1] = 0.0f;
         current_color[2] = 0.0f;
         current_color[3] = 1.0f;
-        i += 5;
+        i += 4;
+        continue;
       } else if (wcsncmp(console->history + i, L"<yellow>", 8) == 0) {
         current_color[0] = 1.0f;
         current_color[1] = 1.0f;
         current_color[2] = 0.0f;
         current_color[3] = 1.0f;
-        i += 8;
+        i += 7;
+        continue;
       } else if (wcsncmp(console->history + i, L"<blue>", 6) == 0) {
         current_color[0] = 0.0f;
         current_color[1] = 1.0f;
         current_color[2] = 0.0f;
         current_color[3] = 1.0f;
-        i += 6;
+        i += 5;
+        continue;
       } else if (wcsncmp(console->history + i, L"<green>", 7) == 0) {
         current_color[0] = 0.0f;
-        current_color[1] = 0.0f;
-        current_color[2] = 1.0f;
+        current_color[1] = 1.0f;
+        current_color[2] = 0.0f;
         current_color[3] = 1.0f;
-        i += 7;
+        i += 6;
+        continue;
       } else if (wcsncmp(console->history + i, L"<orange>", 8) == 0) {
         current_color[0] = 1.0f;
         current_color[1] = 165.0f / 255.0f;
         current_color[2] = 0.0f;
         current_color[3] = 1.0f;
-        i += 8;
+        i += 7;
+        continue;
       } else if (wcsncmp(console->history + i, L"<white>", 7) == 0) {
         current_color[0] = 1.0f;
         current_color[1] = 1.0f;
         current_color[2] = 1.0f;
         current_color[3] = 1.0f;
-        i += 7;
+        i += 6;
+        continue;
+      } else if (wcsncmp(console->history + i, L"<grey>", 6) == 0) {
+        current_color[0] = 0.69f;
+        current_color[1] = 0.69f;
+        current_color[2] = 0.69f;
+        current_color[3] = 1.0f;
+        i += 5;
+        continue;
       } else {
         printf("no matching markup =-( at %ls\n", console->history + i);
       }
     }
+
     character_t *character =
         CL_Characters_get(&console->character_bank, console->history[i]);
 
@@ -387,6 +491,17 @@ void CL_ToggleConsole(client_console_t *console) {
 }
 
 void CL_DestroyConsole(client_t *client, client_console_t *console) {
+  for (unsigned i = 0; i < console->texture_count; i++) {
+    free(console->textures[i].data);
+  }
+
+  CL_Characters_destroy(&console->character_bank);
+  free(console->descriptions);
+  free(console->textures);
+  free(console->history);
+  free(console->history_temp);
   FT_Done_Face(console->source_code_face);
   FT_Done_FreeType(console->ft);
+
+  free(console);
 }

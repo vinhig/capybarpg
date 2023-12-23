@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "jps.h"
+#include "heap.h"
 
 #ifdef DEBUG
 #include <stdio.h>
@@ -665,4 +666,6 @@ void jps_destroy(struct map *m) {
   free(m->open_set_map);
   il_destroy(m->il);
   heap_free(m->h);
+
+  free(m);
 }

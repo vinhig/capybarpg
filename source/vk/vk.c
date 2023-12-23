@@ -1227,6 +1227,18 @@ void VK_DestroyRend(vk_rend_t *rend) {
                      rend->global_allocs[i]);
   }
 
+  free(rend->map_assets.texture_views);
+  free(rend->map_assets.textures);
+  free(rend->map_assets.textures_allocs);
+  free(rend->map_assets.textures_staging);
+  free(rend->map_assets.textures_staging_allocs);
+
+  free(rend->font_assets.texture_views);
+  free(rend->font_assets.textures);
+  free(rend->font_assets.textures_allocs);
+  free(rend->font_assets.textures_staging);
+  free(rend->font_assets.textures_staging_allocs);
+
   vkDestroySampler(rend->device, rend->nearest_sampler, NULL);
   vkDestroySampler(rend->device, rend->linear_sampler, NULL);
   vkDestroySampler(rend->device, rend->anisotropy_sampler, NULL);
@@ -1269,6 +1281,7 @@ void VK_DestroyRend(vk_rend_t *rend) {
 
   vkDestroyInstance(rend->instance, NULL);
 
+  free(rend->immediate_handles);
   free(rend->swapchain_images);
   free(rend->swapchain_image_views);
 
@@ -1675,7 +1688,7 @@ void VK_UpdateFontTextures(vk_rend_t *rend, texture_t *textures,
           .height = texture->height,
           .depth = 1,
       };
-      
+
       VkImageCreateInfo tex_info = {
           .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
           .imageType = VK_IMAGE_TYPE_2D,

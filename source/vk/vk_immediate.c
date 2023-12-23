@@ -49,7 +49,7 @@ bool VK_InitImmediate(vk_rend_t *rend) {
   {
     VkBufferCreateInfo buffer_info = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size = sizeof(game_text_draw_t) * 1024,
+        .size = sizeof(game_text_draw_t) * 4096,
         .pQueueFamilyIndices = &rend->queue_family_graphics_index,
         .queueFamilyIndexCount = 1,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
@@ -88,7 +88,7 @@ bool VK_InitImmediate(vk_rend_t *rend) {
                                 &rend->text->text_layout);
 
     VkDescriptorBufferInfo characters_buffer_info = {
-        .range = sizeof(game_text_draw_t) * 1024,
+        .range = sizeof(game_text_draw_t) * 4096,
         .buffer = rend->text->text_buffer,
     };
 
@@ -442,7 +442,7 @@ bool VK_InitImmediate(vk_rend_t *rend) {
 }
 
 void VK_DrawImmediate(vk_rend_t *rend, game_state_t *state) {
-  memset(rend->text->text_data, 0, sizeof(game_text_draw_t) * 1024);
+  memset(rend->text->text_data, 0, sizeof(game_text_draw_t) * 4096);
   struct Character {
     vec4 color;
     vec2 pos;
@@ -587,4 +587,7 @@ void VK_DestroyImmediate(vk_rend_t *rend) {
     vmaDestroyBuffer(rend->allocator, rend->text->text_buffer,
                      rend->text->text_alloc);
   }
+
+  free(rend->text);
+  free(rend->immediate);
 }

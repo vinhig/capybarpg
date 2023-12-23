@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <wchar.h>
 
 typedef struct game_t game_t;
 typedef struct game_state_t game_state_t;
@@ -37,9 +38,22 @@ void CL_DrawClient(client_t *client, game_state_t *state);
 
 void CL_DestroyClient(client_t *client);
 
-bool CL_InitConsole(client_t* client, client_console_t** console);
-void CL_DrawConsole(client_t *client, game_state_t* state, client_console_t *console);
-void CL_DestroyConsole(client_t* client, client_console_t* console);
-bool CL_ConsoleOpened(client_console_t* console);
+void CL_ExitClient(client_t *client);
+
+bool CL_InitConsole(client_t *client, client_console_t **console);
+void CL_DrawConsole(client_t *client, game_state_t *state,
+                    client_console_t *console);
+void CL_DestroyConsole(client_t *client, client_console_t *console);
+bool CL_ConsoleOpened(client_console_t *console);
 void CL_ToggleConsole(client_console_t *console);
 void CL_UpdateConsole(client_t *client, client_console_t *console);
+
+typedef bool (*cmd_callback_t)(client_console_t *, void *user_data,
+                               wchar_t args[64][64], unsigned);
+typedef struct cmd_desc_t {
+  wchar_t *command;
+  cmd_callback_t callback;
+  void* user_data;
+} cmd_desc_t;
+
+void CL_ExportCommandConsole(client_console_t *console, cmd_desc_t *desc);

@@ -55,6 +55,7 @@ typedef struct texture_job_t {
 } texture_job_t;
 
 typedef struct map_t {
+  // TODO: shouldn't be here lmao...
   struct map *jps_map;
   zpl_mutex mutex;
 
@@ -87,7 +88,7 @@ typedef struct listener_t {
 } listener_t;
 
 typedef struct scene_t {
-  const char *name;
+  char *name;
 
   listener_t start_listeners[16];
   unsigned start_listener_count;

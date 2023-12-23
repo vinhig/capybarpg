@@ -7,7 +7,7 @@ typedef struct vk_rend_t vk_rend_t;
 typedef struct texture_t {
   int width, height, c;
   unsigned char *data;
-  const char *label;
+  char *label;
 
   unsigned handle;
 } texture_t;
