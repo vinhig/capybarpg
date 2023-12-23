@@ -25,8 +25,7 @@ const vec2 square_uv[6] =
       vec2(1.0f, 0.0f));
 // clang-format on
 
-layout(location = 0) out vec3 o_color;
-layout(location = 1) out vec2 vtx_uv;
+layout(location = 0) out vec2 vtx_uv;
 
 layout(push_constant) uniform Transform {
   vec4 pos;
@@ -34,7 +33,7 @@ layout(push_constant) uniform Transform {
 };
 
 void main() {
-  gl_Position = vec4((square_pos[gl_VertexIndex] * scale.xy) + (pos.xy), pos.z, 1.0);
-  o_color = vec3(square_uv[gl_VertexIndex], 1.0);
+  gl_Position =
+      vec4((square_pos[gl_VertexIndex] * scale.xy) + (pos.xy), pos.z, 1.0);
   vtx_uv = square_uv[gl_VertexIndex];
 }

@@ -21,18 +21,6 @@ else
     vulkan = dependency('vulkan')
 endif
 
-shaders = [
-  'source/shaders/gbuffer.vert.glsl',
-  'source/shaders/gbuffer.frag.glsl',
-  'source/shaders/immediate.vert.glsl',
-  'source/shaders/immediate.frag.glsl',
-  'source/shaders/text.vert.glsl',
-  'source/shaders/text.frag.glsl',
-  # 'source/shaders/shading.comp.glsl',
-  'source/shaders/systems/model_matrix_frustum.comp.glsl',
-  # 'source/shaders/systems/path_finding.comp.glsl',
-]
-
 add_global_arguments(
   '-Wall',
   '-Wno-pedantic',
@@ -50,7 +38,42 @@ add_global_arguments(
 
 glsllang = find_program('glslangValidator')
 
+vcc = find_program('vcc')
+
+chad_shader_targets = []
+
+chad_shaders = [
+  'source/shaders/immediate.vert.c',
+  'source/shaders/immediate.frag.c',
+  # 'source/shaders/text.frag.c',
+]
+
+foreach s : chad_shaders
+  target_name = '@0@.spv'.format(s).split('/')
+  chad_shaders += custom_target(
+    target_name.get(target_name.length()-1),
+    command : [vcc, '--entry-point', 'main', '--no-dynamic-scheduling', '--execution-model', 'Fragment', '@INPUT@', '-o', '@OUTPUT@'],
+    build_by_default: true,
+    input : s, 
+    output : '@BASENAME@.spv'
+  )
+endforeach
+
+chad_shaders = declare_dependency(
+  sources: chad_shader_targets
+)
+
 shader_targets = []
+
+shaders = [
+  'source/shaders/gbuffer.vert.glsl',
+  'source/shaders/gbuffer.frag.glsl',
+  'source/shaders/text.vert.glsl',
+  'source/shaders/text.frag.glsl',
+  # 'source/shaders/shading.comp.glsl',
+  'source/shaders/systems/model_matrix_frustum.comp.glsl',
+  # 'source/shaders/systems/path_finding.comp.glsl',
+]
 
 foreach s : shaders
   target_name = '@0@.spv'.format(s).split('/')
@@ -127,9 +150,7 @@ exe = executable('maidenless',
   'source/vk/vk_immediate.c',
   'source/vk/vk_system.c',
 
-  'external/toml.c',
   'external/zpl/zpl_implementation.c',
-  'external/cgltf.c',
   'external/vk_mem_alloc.cpp',
   'external/stbi_image.c',
 
@@ -145,5 +166,5 @@ exe = executable('maidenless',
     include_directories('external/qclib/')
   ],
   link_with: [qcvm],
-  dependencies: [sdl2, opengl, vulkan, freetype, dl, m, shaders, images]
+  dependencies: [sdl2, opengl, vulkan, freetype, dl, m, shaders, images, chad_shaders]
 )

@@ -13,6 +13,7 @@ typedef struct client_desc_t {
   char *desired_gpu;
   char *game;
   bool fullscreen;
+  bool only_scripting;
 } client_desc_t;
 
 typedef enum client_state_t {
@@ -41,3 +42,4 @@ void CL_DrawConsole(client_t *client, game_state_t* state, client_console_t *con
 void CL_DestroyConsole(client_t* client, client_console_t* console);
 bool CL_ConsoleOpened(client_console_t* console);
 void CL_ToggleConsole(client_console_t *console);
+void CL_UpdateConsole(client_t *client, client_console_t *console);

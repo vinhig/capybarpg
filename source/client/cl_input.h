@@ -1,6 +1,7 @@
 #pragma once
 
 #include <wchar.h>
+#include <stdbool.h>
 
 typedef struct client_t client_t;
 
@@ -30,6 +31,7 @@ typedef struct input_t {
 
   struct {
     wchar_t content[128];
+    bool submit;
   } text_editing;
 
   unsigned mouse_x;

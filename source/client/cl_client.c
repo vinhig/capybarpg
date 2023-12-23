@@ -99,6 +99,22 @@ bool CL_ParseClientDesc(client_desc_t *desc, int argc, char *argv[]) {
 
       desc->game = malloc(strlen(base) + 1);
       strcpy(desc->game, base);
+    } else if (!strcmp(arg, "--only-scripting") || !strcmp(arg, "-s")) {
+      if (i + 1 >= argc) {
+        printf("Missing 'true' or 'false' after '--only_scripting' or '-s'.\n");
+        is_error = true;
+        break;
+      }
+      char *only_scripting = argv[i + 1];
+
+      if (!strcmp(only_scripting, "true")) {
+        desc->only_scripting = true;
+      } else if (!strcmp(only_scripting, "false")) {
+        desc->only_scripting = false;
+      } else {
+        printf("Only Scripting is either 'true' or 'false'.\n");
+        is_error = true;
+      }
     }
   }
 
@@ -182,6 +198,8 @@ void CL_UpdateClient(client_t *client) {
   client->input.wheel = 0.0;
 
   if (CL_ConsoleOpened(client->console)) {
+    client->input.text_editing.submit = false;
+
     while (SDL_PollEvent(&event)) {
       if (event.type == SDL_QUIT) {
         client->state = CLIENT_QUITTING;
@@ -201,6 +219,8 @@ void CL_UpdateClient(client_t *client) {
         } else if (event.key.keysym.sym == SDLK_BACKSPACE) {
           client->input.text_editing
               .content[wcslen(client->input.text_editing.content) - 1] = L'\0';
+        } else if (event.key.keysym.sym == 13) {
+          client->input.text_editing.submit = true;
         }
         break;
       }
@@ -299,6 +319,8 @@ void CL_UpdateClient(client_t *client) {
       }
     }
   }
+
+  CL_UpdateConsole(client, client->console);
 }
 
 void CL_DrawClient(client_t *client, game_state_t *state) {
