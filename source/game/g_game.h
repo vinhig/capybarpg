@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "cglm/types.h"
 
@@ -49,8 +50,17 @@ typedef struct game_state_t {
 
 } game_state_t;
 
+typedef struct character_t {
+  unsigned texture_idx;
+
+  vec2 size;
+  vec2 bearing;
+  unsigned advance;
+} character_t;
+
 typedef struct material_t {
   char *name;
+  uint64_t key;
 
   unsigned revision;
 

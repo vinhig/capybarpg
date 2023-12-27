@@ -2,7 +2,6 @@
 
 #include "client/cl_client.h"
 #include "game/g_game.h"
-#include "stbi_image.h"
 #include "vk/vk_system.h"
 #include "vk/vk_vulkan.h"
 
@@ -13,12 +12,16 @@
 //
 #include <qclib/qclib.h>
 
+#include <ft2build.h>
+#include FT_FREETYPE_H
+
 struct map;
 
 ZPL_TABLE_DECLARE(extern, material_bank_t, G_Materials_, material_t)
 ZPL_TABLE_DECLARE(extern, texture_bank_t, G_ImmediateTextures_, texture_t)
 ZPL_TABLE_DECLARE(extern, wall_bank_t, G_Walls_, wall_t)
 ZPL_TABLE_DECLARE(extern, terrain_bank_t, G_Terrains_, terrain_t)
+ZPL_TABLE_DECLARE(extern, character_bank_t, CL_Characters_, character_t)
 
 typedef struct cpu_path_t {
   vec2 *points;
@@ -43,9 +46,38 @@ typedef struct cpu_tile_t {
 
   wall_t *related_wall_recipe;       // may be null
   terrain_t *related_terrain_recipe; // may be null
+  material_t *stack_recipes[3];      // may be null
+  unsigned stack_amounts[3];
+  unsigned stack_count;
 } cpu_tile_t;
 
+typedef struct worker_t {
+  // Hey hey, I heard QCVM wasn't thread-safe. So i just init a QCVM for each
+  // worker thread. Hope you don't mind!
+  qcvm_t *qcvm;
+
+  unsigned id;
+  game_t *game;
+} worker_t;
+
 typedef struct node_t node_t;
+
+typedef struct item_text_job_t {
+  unsigned row;
+
+  game_t *game;
+} item_text_job_t;
+
+typedef struct font_job_t {
+  const char *path;
+
+  unsigned size;
+
+  FT_Face *face;
+  FT_Library ft;
+  
+  game_t *game;
+} font_job_t;
 
 typedef struct texture_job_t {
   const char *path;
@@ -63,17 +95,8 @@ typedef struct map_t {
   unsigned h;
 
   struct Tile *gpu_tiles;
-  cpu_tile_t* cpu_tiles;
+  cpu_tile_t *cpu_tiles;
 } map_t;
-
-typedef struct worker_t {
-  // Hey hey, I heard QCVM wasn't thread-safe. So i just init a QCVM for each
-  // worker thread. Hope you don't mind!
-  qcvm_t *qcvm;
-
-  unsigned id;
-  game_t *game;
-} worker_t;
 
 typedef enum listener_type_t {
   G_SCENE_START,

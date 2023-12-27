@@ -1865,9 +1865,6 @@ void VK_UpdateFontTextures(vk_rend_t *rend, texture_t *textures,
     i++;
   }
 
-  printf("count = %d, texture_count = %d\n", count,
-         rend->font_assets.texture_count);
-
   vkUpdateDescriptorSets(rend->device, count, writes, 0, NULL);
 
   free(writes);

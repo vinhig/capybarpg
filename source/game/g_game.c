@@ -1,7 +1,9 @@
 #include "game/g_game.h"
+#include "freetype/freetype.h"
 #include "vk/vk_vulkan.h"
 #include <client/cl_input.h>
 #include <game/g_private.h>
+#include <stbi_image.h>
 
 #include <jps.h>
 #include <stdio.h>
@@ -11,11 +13,14 @@
 #include <time.h>
 #include <unistd.h>
 
+void G_WorkerSetupTileText(void *data);
+void G_WorkerLoadTexture(void *data);
+void G_WorkerLoadFont(void *data);
+
 extern const unsigned char no_image[];
 extern const unsigned no_image_size;
 
 game_t *G_CreateGame(client_t *client, char *base) {
-  // At the moment, randomly spawn 3000 pawns. And make them wander.
   game_t *game = calloc(1, sizeof(game_t));
 
   game->cpu_agents = calloc(3000, sizeof(cpu_agent_t));
@@ -131,7 +136,6 @@ void G_DestroyGame(game_t *game) {
   }
 
   for (unsigned i = 0; i < game->map_count; i++) {
-    printf("clearing things....\n");
     free(game->maps[i].cpu_tiles);
     jps_destroy(game->maps[i].jps_map);
   }
@@ -255,6 +259,28 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
       if (signature & agent_signature) {
         // G_UpdateAgents(game, i);
       }
+    }
+
+    if (game->current_scene->current_map != -1) {
+      map_t *the_map = &game->maps[game->current_scene->current_map];
+
+      item_text_job_t *jobs = calloc(the_map->h, sizeof(item_text_job_t));
+
+      for (unsigned row = 0; row < the_map->h; row++) {
+        jobs[row] = (item_text_job_t){
+            .row = row,
+            .game = game,
+        };
+
+        printf("adding G_WorkerSetupTileText jobs\n");
+        zpl_jobs_enqueue(&game->job_sys, G_WorkerSetupTileText, &jobs[row]);
+      }
+
+      while (!zpl_jobs_done(&game->job_sys)) {
+        zpl_jobs_process(&game->job_sys);
+      };
+
+      free(jobs);
     }
 
     zpl_f64 delta = (zpl_time_rel() - game->last_time) /
@@ -451,7 +477,8 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
   zpl_json_object *materials = zpl_adt_find(&recipes, "materials", false);
   zpl_json_object *walls = zpl_adt_find(&recipes, "walls", false);
   zpl_json_object *furnitures = zpl_adt_find(&recipes, "furnitures", false);
-  zpl_json_object *items = zpl_adt_find(&recipes, "items", false);
+
+  zpl_unused(furnitures);
 
   // The info extraction is a bit weird as mods can overwrite what was
   // previously specified. So if there isn't a element of a specific type in the
@@ -481,8 +508,6 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
         if (!terrain) {
           G_Terrains_set(&game->terrain_bank, key, (terrain_t){.revision = 1});
           terrain = G_Terrains_get(&game->terrain_bank, key);
-
-          printf("hey! i added %s\n", id_node->string);
         } else {
           terrain->revision += 1;
         }
@@ -556,7 +581,7 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
 
         if (!material) {
           G_Materials_set(&game->material_bank, key,
-                          (material_t){.revision = 1});
+                          (material_t){.revision = 1, .key = key});
           material = G_Materials_get(&game->material_bank, key);
         } else {
           material->revision += 1;
@@ -870,6 +895,122 @@ void G_Add_Recipes_QC(qcvm_t *qcvm) {
   qcvm_return_int(qcvm, (int)G_Add_Recipes(game, path, required));
 }
 
+unsigned G_Add_Items(game_t *game, unsigned map, unsigned x, unsigned y,
+                     material_t *the_item, unsigned amount) {
+  map_t *the_map = &game->maps[map];
+
+  unsigned idx = y * the_map->w + x;
+
+  cpu_tile_t *the_cpu_tile = &the_map->cpu_tiles[idx];
+  struct Tile *the_gpu_tile = &the_map->gpu_tiles[idx];
+
+  unsigned max_stack_size = the_item->stack_size;
+  unsigned remaining = amount;
+  unsigned s_idx = 0;
+
+  while (amount != 0 && s_idx < 3) {
+    // Check if this stack is of the same type
+    if (the_cpu_tile->stack_amounts[s_idx] == 0) {
+      if (remaining >= max_stack_size) {
+        the_cpu_tile->stack_amounts[s_idx] = max_stack_size;
+        remaining -= max_stack_size;
+      } else {
+        the_cpu_tile->stack_amounts[s_idx] = remaining;
+        remaining = 0;
+      }
+      the_cpu_tile->stack_recipes[s_idx] = the_item;
+      the_cpu_tile->stack_count = s_idx + 1;
+      the_gpu_tile->stack_textures[s_idx] = the_item->full_stack_tex;
+      the_gpu_tile->stack_count = s_idx + 1;
+    } else if (the_cpu_tile->stack_recipes[s_idx] &&
+               the_item->key == the_cpu_tile->stack_recipes[s_idx]->key) {
+      unsigned can_place =
+          (max_stack_size - the_cpu_tile->stack_amounts[s_idx]);
+      if (can_place >= remaining) {
+        the_cpu_tile->stack_amounts[s_idx] += remaining;
+      } else {
+        the_cpu_tile->stack_amounts[s_idx] += can_place;
+        remaining -= can_place;
+      }
+    }
+
+    s_idx++;
+  }
+
+  printf("remaining: %d\n", remaining);
+
+  return remaining;
+}
+
+void G_Add_Items_QC(qcvm_t *qcvm) {
+  worker_t *worker = qcvm_get_user_data(qcvm);
+  game_t *game = worker->game;
+
+  int map = qcvm_get_parm_int(qcvm, 0);
+  float x = qcvm_get_parm_float(qcvm, 1);
+  float y = qcvm_get_parm_float(qcvm, 2);
+  const char *recipe = qcvm_get_parm_string(qcvm, 3);
+  float amount = qcvm_get_parm_float(qcvm, 4);
+
+  if (map < 0 || map >= (int)game->map_count) {
+    printf(
+        "[ERROR] Assertion G_Add_Items_QC(map >= 0 || map < game->map_count) "
+        "[map = %d, map_count = %d] should be "
+        "verified.\n",
+        map, game->map_count);
+    return;
+  }
+
+  map_t *the_map = &game->maps[map];
+
+  if (x < 0.0f || x >= the_map->w) {
+    printf("[ERROR] Assertion G_Add_Items_QC(x >= 0 || x < "
+           "map->w) "
+           "[x = %d, map->w = %d] should be "
+           "verified.\n",
+           (unsigned)x, the_map->w);
+    return;
+  }
+
+  if (y < 0.0f || y >= the_map->h) {
+    printf("[ERROR] Assertion G_Add_Items_QC(y >= 0 || y < "
+           "map->h) "
+           "[y = %d, map->h = %d] should be "
+           "verified.\n",
+           (unsigned)x, the_map->h);
+    return;
+  }
+
+  zpl_u64 key = zpl_fnv64(recipe, strlen(recipe));
+  material_t *the_item = G_Materials_get(&game->material_bank, key);
+
+  if (!the_item) {
+    printf("[ERROR] Assertion G_Add_Items_QC(recipe exists) [recipe = \"%s\"] "
+           "should be verified.\n",
+           recipe);
+    return;
+  }
+
+  if (amount <= 0.0f) {
+    printf("[ERROR] Assertion G_Add_Items_QC(amount is positive) [amount = "
+           "%.03f] "
+           "should be verified.\n",
+           amount);
+    return;
+  }
+
+  float placed = G_Add_Items(game, map, x, y, the_item, (unsigned)amount);
+
+  qcvm_return_float(qcvm, placed);
+}
+
+bool G_Find_Nearest_Items(unsigned map, unsigned x, unsigned y,
+                          const char *recipe, unsigned start_search) {
+  return false;
+}
+
+void G_Find_Nearest_Items_QC(qcvm_t *qcvm) {}
+
 void G_Draw_Image_Relative(game_t *game, const char *path, float w, float h,
                            float x, float y, float z) {
   // Is the image loaded?
@@ -972,6 +1113,89 @@ void G_Run_Scene_QC(qcvm_t *qcvm) {
 
   G_Run_Scene(worker, scene_name);
 }
+
+void G_WorkerSetupTileText(void *data) {
+  item_text_job_t *the_job = data;
+
+  // worker_t *worker = the_job->worker;
+  game_t *game = the_job->game;
+  map_t *the_map = &game->maps[game->current_scene->current_map];
+
+  char amount_str[256];
+
+  for (unsigned col = 0; col < the_map->w; col++) {
+    unsigned idx = the_job->row * the_map->w + col;
+
+    cpu_tile_t *the_tile = &the_map->cpu_tiles[idx];
+
+    for (unsigned i = 0; i < 3; i++) {
+      if (the_tile->stack_amounts[i] != 0) {
+        sprintf(&amount_str[0], "%d", the_tile->stack_amounts[i]);
+      }
+    }
+  }
+}
+
+// void G_WorkerLoadFont(void *data) {
+//   font_job_t *the_job = data;
+//   game_t *game = the_job->game;
+
+//   FT_Library ft = the_job->ft;
+
+//   if (FT_New_Face(ft, the_job->path, 0, the_job->face)) {
+//     printf("[ERROR] Couldn't load font family "
+//            "(\"%s\") for the console.\n",
+//            the_job->path);
+//     return;
+//   }
+
+//   FT_Set_Pixel_Sizes(*the_job->face, 0, the_job->size);
+
+//   wchar_t alphabet[] = L"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ()"
+//                        L"{}:/+-_*012345789おはよう!?èé&#<>.,\\\"ùàç []";
+
+//   for (unsigned i = 0; i < sizeof(alphabet) / sizeof(wchar_t); i++) {
+//     if (FT_Load_Char(*the_job->face, alphabet[i],
+//                      FT_LOAD_RENDER | FT_LOAD_COLOR)) {
+//       printf("[WARNING] Ooopsie doopsie, the char `%lc` isn't supported...\n",
+//              alphabet[i]);
+//     }
+
+//     FT_GlyphSlot the_glyph = (*the_job->face)->glyph;
+//     // See console note
+//     // if (the_glyph->bitmap.width == 0 || the_glyph->bitmap.rows == 0) {
+//     //   FT_Load_Char(*the_job->face, L'_',
+//     //                FT_LOAD_RENDER | FT_LOAD_COLOR);
+//     //   the_glyph = console->source_code_face->glyph;
+//     //   the_glyph->bitmap.buffer = console->white_space;
+//     // }
+
+//     unsigned data_size = the_glyph->bitmap.width * the_glyph->bitmap.rows;
+//     console->textures[console->texture_count] = (texture_t){
+//         .c = 1,
+//         .width = the_glyph->bitmap.width,
+//         .height = the_glyph->bitmap.rows,
+//         .data = memcpy(malloc(data_size), the_glyph->bitmap.buffer, data_size),
+//         .label = "character",
+//     };
+
+//     console->texture_count++;
+
+//     CL_Characters_set(&console->character_bank, alphabet[i],
+//                       (character_t){
+//                           i,
+//                           {
+//                               the_glyph->bitmap.width,
+//                               the_glyph->bitmap.rows,
+//                           },
+//                           {
+//                               the_glyph->bitmap_left,
+//                               the_glyph->bitmap_top,
+//                           },
+//                           the_glyph->advance.x,
+//                       });
+//   }
+// }
 
 void G_WorkerLoadTexture(void *data) {
   texture_job_t *the_job = data;
@@ -1234,8 +1458,6 @@ void G_Load_Game_QC(qcvm_t *qcvm) {
     return;
   }
 
-  printf("next_scene will be %s\n", next_scene);
-
   game->next_scene = memcpy(malloc(strlen(next_scene) + 1), next_scene,
                             strlen(next_scene) + 1);
 
@@ -1304,7 +1526,7 @@ void G_Add_Wall_QC(qcvm_t *qcvm) {
 
   if (y < 0.0f || y >= the_map->h) {
     printf("[ERROR] Assertion G_Map_Set_Terrain_Type(y >= 0 || y < "
-           "map->y) "
+           "map->h) "
            "[y = %d, map->h = %d] should be "
            "verified.\n",
            (unsigned)x, the_map->h);
@@ -1377,10 +1599,10 @@ void G_Add_Listener(game_t *game, listener_type_t type, const char *attachment,
           func;
       the_scene->start_listener_count++;
     } else {
-      printf(
-          "[ERROR] QuakeC code specified a non-existent scene `%s` when trying "
-          "to attach a `G_SCENE_START` listener.\n",
-          attachment);
+      printf("[ERROR] QuakeC code specified a non-existent scene `%s` when "
+             "trying "
+             "to attach a `G_SCENE_START` listener.\n",
+             attachment);
     }
 
     break;
@@ -1399,10 +1621,10 @@ void G_Add_Listener(game_t *game, listener_type_t type, const char *attachment,
       the_scene->end_listeners[the_scene->end_listener_count].qcvm_func = func;
       the_scene->end_listener_count++;
     } else {
-      printf(
-          "[ERROR] QuakeC code specified a non-existent scene `%s` when trying "
-          "to attach a `G_SCENE_END` listener.\n",
-          attachment);
+      printf("[ERROR] QuakeC code specified a non-existent scene `%s` when "
+             "trying "
+             "to attach a `G_SCENE_END` listener.\n",
+             attachment);
     }
 
     break;
@@ -1422,10 +1644,10 @@ void G_Add_Listener(game_t *game, listener_type_t type, const char *attachment,
           func;
       the_scene->update_listener_count++;
     } else {
-      printf(
-          "[ERROR] QuakeC code specified a non-existent scene `%s` when trying "
-          "to attach a `G_SCENE_UPDATE` listener.\n",
-          attachment);
+      printf("[ERROR] QuakeC code specified a non-existent scene `%s` when "
+             "trying "
+             "to attach a `G_SCENE_UPDATE` listener.\n",
+             attachment);
     }
 
     break;
@@ -1446,10 +1668,10 @@ void G_Add_Listener(game_t *game, listener_type_t type, const char *attachment,
           .qcvm_func = func;
       the_scene->camera_update_listener_count++;
     } else {
-      printf(
-          "[ERROR] QuakeC code specified a non-existent scene `%s` when trying "
-          "to attach a `G_CAMERA_UPDATE` listener.\n",
-          attachment);
+      printf("[ERROR] QuakeC code specified a non-existent scene `%s` when "
+             "trying "
+             "to attach a `G_CAMERA_UPDATE` listener.\n",
+             attachment);
     }
 
     break;
@@ -1672,6 +1894,30 @@ void G_Install_QCVM(worker_t *worker) {
       .type = QCVM_VECTOR,
   };
 
+  qcvm_export_t export_G_Add_Items = {
+      .func = G_Add_Items_QC,
+      .name = "G_Add_Items",
+      .argc = 5,
+      .args[0] = {.name = "map", .type = QCVM_INT},
+      .args[1] = {.name = "x", .type = QCVM_FLOAT},
+      .args[2] = {.name = "y", .type = QCVM_FLOAT},
+      .args[3] = {.name = "recipe", .type = QCVM_STRING},
+      .args[4] = {.name = "amount", .type = QCVM_FLOAT},
+      .type = QCVM_VOID,
+  };
+
+  qcvm_export_t export_G_Find_Nearest_Items = {
+      .func = G_Find_Nearest_Items_QC,
+      .name = "G_Find_Nearest_Items",
+      .argc = 5,
+      .args[0] = {.name = "map", .type = QCVM_INT},
+      .args[1] = {.name = "org_x", .type = QCVM_FLOAT},
+      .args[2] = {.name = "org_y", .type = QCVM_FLOAT},
+      .args[3] = {.name = "recipe", .type = QCVM_STRING},
+      .args[4] = {.name = "start_search", .type = QCVM_INT},
+      .type = QCVM_VECTOR,
+  };
+
   qcvm_add_export(worker->qcvm, &export_G_Add_Recipes);
   qcvm_add_export(worker->qcvm, &export_G_Load_Game);
   qcvm_add_export(worker->qcvm, &export_G_Get_Last_Asset_Loaded);
@@ -1689,6 +1935,8 @@ void G_Install_QCVM(worker_t *worker) {
   qcvm_add_export(worker->qcvm, &export_G_Get_Axis);
   qcvm_add_export(worker->qcvm, &export_G_Get_Mouse_Position);
   qcvm_add_export(worker->qcvm, &export_G_Get_Screen_Size);
+  qcvm_add_export(worker->qcvm, &export_G_Add_Items);
+  qcvm_add_export(worker->qcvm, &export_G_Find_Nearest_Items);
 }
 
 bool G_Load(client_t *client, game_t *game) {

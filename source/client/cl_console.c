@@ -4,7 +4,6 @@
 #include "game/g_game.h"
 #include "vk/vk_vulkan.h"
 
-#include <assert.h>
 #include <ft2build.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -15,14 +14,6 @@
 
 #include <cglm/vec2.h>
 #include <zpl/zpl.h>
-
-typedef struct character_t {
-  unsigned texture_idx;
-
-  vec2 size;
-  vec2 bearing;
-  unsigned advance;
-} character_t;
 
 ZPL_TABLE_DECLARE(extern, character_bank_t, CL_Characters_, character_t)
 ZPL_TABLE_DEFINE(character_bank_t, CL_Characters_, character_t)
@@ -232,8 +223,10 @@ void CL_UpdateConsole(client_t *client, client_console_t *console) {
     console->output = NULL;
 
     bool result = false;
+    bool found = false;
     for (unsigned c = 0; c < console->description_count; c++) {
       if (wcscmp(console->descriptions[c].command, args[0]) == 0) {
+        found = true;
         result = console->descriptions[c].callback(
             console, console->descriptions[c].user_data, args, arg_count - 1);
       }
@@ -244,9 +237,15 @@ void CL_UpdateConsole(client_t *client, client_console_t *console) {
                L"%ls<green> >> <white>%ls\n", console->history,
                &CL_GetInput(client)->text_editing.content[0]);
     } else {
+      if (found) {
       swprintf(console->history_temp, console->history_size,
                L"%ls<red>[X] <white>%ls\n", console->history,
                &CL_GetInput(client)->text_editing.content[0]);
+      } else {
+              swprintf(console->history_temp, console->history_size,
+               L"%ls<red>[X] <white>%ls\n<grey>Command not found.\n", console->history,
+               &CL_GetInput(client)->text_editing.content[0]);
+      }
     }
 
     memcpy(console->history, console->history_temp,

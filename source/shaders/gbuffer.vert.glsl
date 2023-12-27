@@ -34,6 +34,9 @@ layout(location = 0) out vec3 o_color;
 layout(location = 1) out vec2 vtx_uv;
 layout(location = 2) flat out uvec4 o_albedo_id;
 
+layout(location = 3) flat out uint stack_count;
+layout(location = 4) flat out uint stack_textures[4];
+
 layout(std430, set = 3, binding = 0) readonly buffer Visibles {
   uint visibles[];
 };
@@ -114,6 +117,9 @@ void main() {
     } else {
       o_albedo_id = uvec4(tiles[gl_InstanceIndex].terrain_texture, uvec3(0));
     }
+
+    stack_count = tiles[gl_InstanceIndex].stack_count;
+    stack_textures = tiles[gl_InstanceIndex].stack_textures;
 
   } else if (draw_state == 1) {
     // This is drawing a PAWN/FURNITURE

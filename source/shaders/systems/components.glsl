@@ -52,6 +52,9 @@ struct Tile {
 
   uint selected;
   uint fire;
+
+  uint stack_textures[4];
+  uint stack_count;
 };
 
 #ifndef is_C
