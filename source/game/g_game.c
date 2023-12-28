@@ -276,8 +276,6 @@ game_state_t *G_TickGame(client_t *client, game_t *game) {
             -1.0f / zoom + offset_y, 1.0f / zoom + offset_y, 0.01, 50.0,
             (vec4 *)&game->state.fps.view_proj);
 
-  printf("zoom = %.03f, offset_x = %.03f, offset_y = %.03f\n", zoom, offset_x, offset_y);
-
   game->delta_time = zpl_time_rel() - game->last_time;
 
   game->last_time = zpl_time_rel();
@@ -968,7 +966,6 @@ unsigned G_Add_Items(game_t *game, unsigned map, unsigned x, unsigned y,
       the_gpu_tile->stack_count = s_idx + 1;
     } else if (the_cpu_tile->stack_recipes[s_idx] &&
                the_item->key == the_cpu_tile->stack_recipes[s_idx]->key) {
-      printf("found a stack of same type for %s\n", the_item->name);
       unsigned can_place =
           (max_stack_size - the_cpu_tile->stack_amounts[s_idx]);
 
@@ -978,14 +975,11 @@ unsigned G_Add_Items(game_t *game, unsigned map, unsigned x, unsigned y,
       } else {
         the_cpu_tile->stack_amounts[s_idx] += can_place;
         remaining -= can_place;
-        printf("the stack is full, remaining: %d\n", remaining);
       }
     }
 
     s_idx++;
   }
-
-  printf("after -> %d\n", the_cpu_tile->stack_count);
 
   return remaining;
 }
@@ -1402,7 +1396,6 @@ void G_WorkerLoadTexture(void *data) {
   game->map_textures[game->map_texture_count] = tex;
   *the_job->dest_text = game->map_texture_count;
   game->map_texture_count++;
-
   zpl_mutex_unlock(&game->map_texture_mutex);
 }
 
@@ -1582,8 +1575,7 @@ void G_Load_Game(worker_t *worker) {
     zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, only_top_job);
     zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, only_bottom_job);
     zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, all_job);
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture,
-                     left_right_bottom_job);
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, left_right_bottom_job);
     zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, left_right_job);
     zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, left_right_top_job);
     zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, top_bottom_job);
@@ -1596,7 +1588,7 @@ void G_Load_Game(worker_t *worker) {
     zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, nothing_job);
   }
 
-  offset += zpl_array_count(game->wall_bank.entries) * 3;
+  offset += zpl_array_count(game->wall_bank.entries) * 16;
 
   for (unsigned i = 0; i < zpl_array_count(game->terrain_bank.entries); i++) {
     terrain_bank_tEntry *entry = &game->terrain_bank.entries[i];
@@ -1638,8 +1630,7 @@ void G_Load_Game(worker_t *worker) {
          (float)(zpl_time_rel() - now));
 
   VK_UploadMapTextures(game->rend, game->map_textures, game->map_texture_count);
-  VK_UploadFontTextures(game->rend, game->font_textures,
-                        game->font_texture_count);
+  VK_UploadFontTextures(game->rend, game->font_textures, game->font_texture_count);
 
   G_Run_Scene(worker, game->next_scene);
 

@@ -280,31 +280,28 @@ void G_Add_Wall(game_t *game, int map, int x, int y, float health,
   // all to be sure there is not bad surprise.
   zpl_mutex_lock(&game->maps[map].mutex);
 
-  for (unsigned i = 0; i < game->worker_count; i++) {
-    map_t *the_map = &game->maps[map];
+  map_t *the_map = &game->maps[map];
+  jps_set_obstacle(the_map->jps_map, x, y, 1);
+  unsigned idx = y * the_map->w + x;
+  // Place the wall with its correct orientation
+  the_map->gpu_tiles[idx].wall_texture =
+      G_ComputeWallOrientation(the_map, wall_recipe, x, y);
+  the_map->cpu_tiles[idx].related_wall_recipe = wall_recipe;
 
-    jps_set_obstacle(the_map->jps_map, x, y, 1);
-    unsigned idx = y * the_map->w + x;
-    // Place the wall with its correct orientation
-    the_map->gpu_tiles[idx].wall_texture =
-        G_ComputeWallOrientation(the_map, wall_recipe, x, y);
-    the_map->cpu_tiles[idx].related_wall_recipe = wall_recipe;
+  // And then, maybe update its neighbors
+  for (int xx = x - 1; xx < x + 2; xx++) {
+    for (int yy = y - 1; yy < y + 2; yy++) {
+      if (xx < 0 || yy < 0 || xx > (int)the_map->w || yy > (int)the_map->h) {
+        continue;
+      }
 
-    // And then, maybe update its neighbors
-    for (int xx = x - 1; xx < x + 2; xx++) {
-      for (int yy = y - 1; yy < y + 2; yy++) {
-        if (xx < 0 || yy < 0 || xx > (int)the_map->w || yy > (int)the_map->h) {
-          continue;
-        }
+      unsigned neighbor_idx = yy * the_map->w + xx;
 
-        unsigned neighbor_idx = yy * the_map->w + xx;
-
-        if (the_map->gpu_tiles[neighbor_idx].wall_texture != 0) {
-          the_map->gpu_tiles[neighbor_idx].wall_texture =
-              G_ComputeWallOrientation(
-                  the_map, the_map->cpu_tiles[neighbor_idx].related_wall_recipe,
-                  xx, yy);
-        }
+      if (the_map->gpu_tiles[neighbor_idx].wall_texture != 0) {
+        the_map->gpu_tiles[neighbor_idx].wall_texture =
+            G_ComputeWallOrientation(
+                the_map, the_map->cpu_tiles[neighbor_idx].related_wall_recipe,
+                xx, yy);
       }
     }
   }
