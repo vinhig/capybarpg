@@ -45,7 +45,7 @@ int main(int argc, char **argv) {
     return -1;
   }
 
-  game_state_t state;
+  game_state_t* state;
   unsigned frame = 0;
 
   while ((CL_GetClientState(client) != CLIENT_DESTROYING) &&
@@ -53,7 +53,7 @@ int main(int argc, char **argv) {
     if (CL_GetClientState(client) != CLIENT_PAUSED || frame == 0) {
       state = G_TickGame(client, game);
     }
-    CL_DrawClient(client, &state);
+    CL_DrawClient(client, game, state);
     CL_UpdateClient(client);
     frame++;
   }

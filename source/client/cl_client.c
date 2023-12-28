@@ -321,8 +321,8 @@ void CL_UpdateClient(client_t *client) {
   CL_UpdateConsole(client, client->console);
 }
 
-void CL_DrawClient(client_t *client, game_state_t *state) {
-  CL_DrawConsole(client, state, client->console);
+void CL_DrawClient(client_t *client, game_t *game, game_state_t *state) {
+  CL_DrawConsole(client, game, state, client->console);
   VK_Draw(client->rend, state);
 }
 

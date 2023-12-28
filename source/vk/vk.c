@@ -681,7 +681,7 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
 
   // Create default samplers
   {
-    VkSamplerCreateInfo nearest_sampler_info = {
+    VkSamplerCreateInfo sampler_info = {
         .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
         .magFilter = VK_FILTER_NEAREST,
         .minFilter = VK_FILTER_NEAREST,
@@ -692,25 +692,31 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
         // .maxAnisotropy = 16,
     };
 
-    vkCreateSampler(rend->device, &nearest_sampler_info, NULL,
-                    &rend->nearest_sampler);
+    vkCreateSampler(rend->device, &sampler_info, NULL, &rend->nearest_sampler);
 
-    nearest_sampler_info.magFilter = VK_FILTER_LINEAR;
-    nearest_sampler_info.minFilter = VK_FILTER_LINEAR;
-    nearest_sampler_info.anisotropyEnable = VK_TRUE;
-    nearest_sampler_info.maxAnisotropy = 16;
+    sampler_info.magFilter = VK_FILTER_LINEAR;
+    sampler_info.minFilter = VK_FILTER_LINEAR;
 
-    vkCreateSampler(rend->device, &nearest_sampler_info, NULL,
-                    &rend->linear_sampler);
+    vkCreateSampler(rend->device, &sampler_info, NULL, &rend->linear_sampler);
 
-    nearest_sampler_info.anisotropyEnable = VK_TRUE,
-    nearest_sampler_info.magFilter = VK_FILTER_LINEAR;
-    nearest_sampler_info.minFilter = VK_FILTER_LINEAR;
-    nearest_sampler_info.anisotropyEnable = VK_TRUE;
-    nearest_sampler_info.maxAnisotropy = 16;
+    sampler_info.anisotropyEnable = VK_TRUE,
+    sampler_info.magFilter = VK_FILTER_LINEAR;
+    sampler_info.minFilter = VK_FILTER_LINEAR;
+    sampler_info.anisotropyEnable = VK_TRUE;
+    sampler_info.maxAnisotropy = 16;
 
-    vkCreateSampler(rend->device, &nearest_sampler_info, NULL,
-                    &rend->anisotropy_sampler);
+    sampler_info.anisotropyEnable = VK_TRUE,
+    sampler_info.magFilter = VK_FILTER_LINEAR;
+    sampler_info.minFilter = VK_FILTER_LINEAR;
+    sampler_info.anisotropyEnable = VK_TRUE;
+    sampler_info.maxAnisotropy = 16;
+    sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+    sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+    sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+    sampler_info.borderColor = VK_BORDER_COLOR_INT_TRANSPARENT_BLACK;
+
+    vkCreateSampler(rend->device, &sampler_info, NULL,
+                    &rend->font_sampler);
   }
 
   // Create semaphores
@@ -1292,7 +1298,7 @@ void VK_DestroyRend(vk_rend_t *rend) {
 const char *VK_GetError() { return (const char *)vk_error; }
 
 void VK_CreateTexturesDescriptor(vk_rend_t *rend, vk_assets_t *assets,
-                                 VkDescriptorSet dst_set) {
+                                 VkDescriptorSet dst_set, VkSampler sampler) {
   // Should be "UpdateTexturesDescriptor", but how god vulkan is complicated
   // Add dynamically too
   VkWriteDescriptorSet *writes =
@@ -1303,7 +1309,7 @@ void VK_CreateTexturesDescriptor(vk_rend_t *rend, vk_assets_t *assets,
   for (unsigned t = 0; t < assets->texture_count; t++) {
     VkImageView texture = assets->texture_views[t];
 
-    image_infos[t].sampler = rend->linear_sampler;
+    image_infos[t].sampler = sampler;
     image_infos[t].imageView = texture;
     image_infos[t].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
@@ -1492,7 +1498,7 @@ void VK_UploadMapTextures(vk_rend_t *rend, texture_t *textures,
   vkQueueSubmit(rend->graphics_queue, 1, &submit_info, rend->transfer_fence);
 
   VK_CreateTexturesDescriptor(rend, &rend->map_assets,
-                              rend->map_textures_desc_set);
+                              rend->map_textures_desc_set, rend->nearest_sampler);
 }
 
 void VK_UploadFontTextures(vk_rend_t *rend, texture_t *textures,
@@ -1654,7 +1660,7 @@ void VK_UploadFontTextures(vk_rend_t *rend, texture_t *textures,
   vkQueueSubmit(rend->graphics_queue, 1, &submit_info, rend->transfer_fence);
 
   VK_CreateTexturesDescriptor(rend, &rend->font_assets,
-                              rend->font_textures_desc_set);
+                              rend->font_textures_desc_set, rend->font_sampler);
 }
 
 void VK_UpdateFontTextures(vk_rend_t *rend, texture_t *textures,
@@ -1851,7 +1857,7 @@ void VK_UpdateFontTextures(vk_rend_t *rend, texture_t *textures,
        t < rend->font_assets.texture_count; t++) {
     VkImageView texture = rend->font_assets.texture_views[t];
 
-    image_infos[i].sampler = rend->linear_sampler;
+    image_infos[i].sampler = rend->font_sampler;
     image_infos[i].imageView = texture;
     image_infos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 

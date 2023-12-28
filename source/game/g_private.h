@@ -75,7 +75,8 @@ typedef struct font_job_t {
 
   FT_Face *face;
   FT_Library ft;
-  
+  character_bank_t* character_bank;
+
   game_t *game;
 } font_job_t;
 
@@ -153,10 +154,24 @@ struct game_t {
   char *next_scene;
   scene_t *current_scene;
 
-  texture_t *textures;
-  unsigned texture_count;
-  unsigned texture_capacity;
-  zpl_mutex texture_mutex;
+  texture_t *map_textures;
+  unsigned map_texture_count;
+  unsigned map_texture_capacity;
+  zpl_mutex map_texture_mutex;
+
+  texture_t *font_textures;
+  unsigned font_texture_count;
+  unsigned font_texture_capacity;
+  zpl_mutex font_mutex; // protecc font_textures and character_bank
+
+  FT_Library console_ft; // two different libs, because multithreading
+  FT_Library game_ft;
+  FT_Face console_face;
+  FT_Face game_face;
+
+  character_bank_t console_character_bank;
+  character_bank_t game_character_bank;
+  unsigned char* white_space;
 
   zpl_mutex global_map_mutex;
   unsigned map_count;

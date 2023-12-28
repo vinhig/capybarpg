@@ -5,6 +5,7 @@
 #include "vk/vk_vulkan.h"
 
 #include <ft2build.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,16 +28,6 @@ typedef struct client_console_t {
   wchar_t *output;
 
   bool opened;
-
-  // TODO: the console shouldn't own it's own copy of freetype
-  FT_Library ft;
-  FT_Face source_code_face;
-
-  character_bank_t character_bank;
-
-  texture_t *textures;
-  unsigned texture_count;
-  unsigned texture_capacity;
 
   unsigned char
       *white_space; // TODO: some font family return a 0x0 glyph for the white
@@ -82,12 +73,6 @@ bool CL_InitConsole(client_t *client, client_console_t **c) {
   (*c) = calloc(1, sizeof(client_console_t));
   client_console_t *console = *c;
 
-  CL_Characters_init(&console->character_bank, zpl_heap_allocator());
-
-  console->textures = calloc(128, sizeof(texture_t));
-  console->texture_capacity = 128;
-  console->texture_count = 0;
-  console->white_space = calloc(1, 64 * 64);
   console->history = calloc(1024, sizeof(wchar_t));
   console->history_temp = calloc(1024, sizeof(wchar_t));
   console->history_size = 1024;
@@ -95,69 +80,6 @@ bool CL_InitConsole(client_t *client, client_console_t **c) {
   console->description_capacity = 16;
   console->description_count = 0;
   console->descriptions = calloc(16, sizeof(cmd_desc_t));
-
-  if (FT_Init_FreeType(&console->ft)) {
-    printf("[ERROR] Couldn't init freetype for the console.\n");
-    return false;
-  }
-
-  if (FT_New_Face(console->ft, "../source/resources/JF-Dot-Paw16.ttf", 0,
-                  &console->source_code_face)) {
-    printf(
-        "[ERROR] Couldn't load Source Code font family "
-        "(\"../source/resources/SourceCodePro-Bold.ttf\") for the console.\n");
-    return false;
-  }
-
-  FT_Set_Pixel_Sizes(console->source_code_face, 0, 48);
-
-  wchar_t alphabet[] = L"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ()"
-                       L"{}:/+-_*012345789おはよう!?èé&#<>.,\\\"ùàç []";
-
-  for (unsigned i = 0; i < sizeof(alphabet) / sizeof(wchar_t); i++) {
-    if (FT_Load_Char(console->source_code_face, alphabet[i],
-                     FT_LOAD_RENDER | FT_LOAD_COLOR)) {
-      printf("[WARNING] Ooopsie doopsie, the char `%lc` isn't supported...\n",
-             alphabet[i]);
-    }
-
-    FT_GlyphSlot the_glyph = console->source_code_face->glyph;
-    // See console note
-    if (the_glyph->bitmap.width == 0 || the_glyph->bitmap.rows == 0) {
-      FT_Load_Char(console->source_code_face, L'_',
-                   FT_LOAD_RENDER | FT_LOAD_COLOR);
-      the_glyph = console->source_code_face->glyph;
-      the_glyph->bitmap.buffer = console->white_space;
-    }
-
-    unsigned data_size = the_glyph->bitmap.width * the_glyph->bitmap.rows;
-    console->textures[console->texture_count] = (texture_t){
-        .c = 1,
-        .width = the_glyph->bitmap.width,
-        .height = the_glyph->bitmap.rows,
-        .data = memcpy(malloc(data_size), the_glyph->bitmap.buffer, data_size),
-        .label = "character",
-    };
-
-    console->texture_count++;
-
-    CL_Characters_set(&console->character_bank, alphabet[i],
-                      (character_t){
-                          i,
-                          {
-                              the_glyph->bitmap.width,
-                              the_glyph->bitmap.rows,
-                          },
-                          {
-                              the_glyph->bitmap_left,
-                              the_glyph->bitmap_top,
-                          },
-                          the_glyph->advance.x,
-                      });
-  }
-
-  VK_UploadFontTextures(CL_GetRend(client), console->textures,
-                        console->texture_count);
 
   cmd_desc_t version_command = {
       .command = L"version",
@@ -238,13 +160,14 @@ void CL_UpdateConsole(client_t *client, client_console_t *console) {
                &CL_GetInput(client)->text_editing.content[0]);
     } else {
       if (found) {
-      swprintf(console->history_temp, console->history_size,
-               L"%ls<red>[X] <white>%ls\n", console->history,
-               &CL_GetInput(client)->text_editing.content[0]);
+        swprintf(console->history_temp, console->history_size,
+                 L"%ls<red>[X] <white>%ls\n", console->history,
+                 &CL_GetInput(client)->text_editing.content[0]);
       } else {
-              swprintf(console->history_temp, console->history_size,
-               L"%ls<red>[X] <white>%ls\n<grey>Command not found.\n", console->history,
-               &CL_GetInput(client)->text_editing.content[0]);
+        swprintf(console->history_temp, console->history_size,
+                 L"%ls<red>[X] <white>%ls\n<grey>Command not found.\n",
+                 console->history,
+                 &CL_GetInput(client)->text_editing.content[0]);
       }
     }
 
@@ -263,7 +186,7 @@ void CL_UpdateConsole(client_t *client, client_console_t *console) {
   }
 }
 
-void CL_DrawConsole(client_t *client, game_state_t *state,
+void CL_DrawConsole(client_t *client, game_t *game, game_state_t *state,
                     client_console_t *console) {
   if (!console->opened) {
     return;
@@ -282,32 +205,18 @@ void CL_DrawConsole(client_t *client, game_state_t *state,
   unsigned cmd_len = wcslen(cmd);
   unsigned history_len = wcslen(console->history);
 
-  if (cmd_len + history_len >= state->text_capacity) {
-    free(state->texts);
-    state->texts = calloc(cmd_len + history_len, sizeof(game_text_draw_t));
-    state->text_capacity = cmd_len + history_len;
-  } else if (state->texts == NULL) {
-    state->texts = calloc(cmd_len + history_len, sizeof(game_text_draw_t));
-    state->text_capacity = cmd_len + history_len;
-  }
-
   float current_pos = 0.0f;
 
   unsigned screen_width, screen_height;
   CL_GetViewDim(client, &screen_width, &screen_height);
 
-  // While we register every single characters to be drawn, it's possible we
-  // encounter characters that weren't previously loaded. It's not a problem ,
-  // they'll be loaded at the end of this function (remember texture are
-  // specified using an index, so no reference whatsoever).
-  // Let's keep track of potential new texture. When drawing the command
-  // history, we don't bother checking for new texture. All characters were
-  // typically drawn when typing the command in the first place.
-  unsigned new_texture_count = 0;
-
   float top = 0.0f;
 
   vec4 current_color = {1.0f, 1.0f, 1.0f, 1.0f};
+
+  unsigned off = atomic_load(&state->text_count);
+
+  // printf("offset is %d\n", off);
 
   for (unsigned i = 0; i < history_len; i++) {
     if (console->history[i] == L'\n') {
@@ -370,83 +279,11 @@ void CL_DrawConsole(client_t *client, game_state_t *state,
     }
 
     character_t *character =
-        CL_Characters_get(&console->character_bank, console->history[i]);
+        G_GetCharacter(game, "console", console->history[i]);
 
-    state->texts[i].color[0] = current_color[0];
-    state->texts[i].color[1] = current_color[1];
-    state->texts[i].color[2] = current_color[2];
-    state->texts[i].color[3] = current_color[3];
-    state->texts[i].tex = character->texture_idx;
-    // Position according to character
-    state->texts[i].pos[0] = current_pos + character->bearing[0];
-    state->texts[i].pos[1] = -character->bearing[1];
-
-    // Position at the top left of the screen
-
-    state->texts[i].pos[0] -= screen_width;
-    state->texts[i].pos[0] += 16;
-    state->texts[i].pos[1] -= screen_height;
-    state->texts[i].pos[1] += (48 + top);
-
-    // printf("advance --> %d\n", character->advance);
-    state->texts[i].size[0] = character->size[0];
-    state->texts[i].size[1] = character->size[1];
-
-    current_pos += (float)(character->advance >> 6);
-  }
-
-  unsigned off = history_len;
-
-  for (unsigned i = 0; i < cmd_len; i++) {
-    character_t *character =
-        CL_Characters_get(&console->character_bank, cmd[i]);
-
-    // We didn't load all possible characters, maybe it's a new one, let's load
-    // it
     if (!character) {
-      if (FT_Load_Char(console->source_code_face, cmd[i],
-                       FT_LOAD_RENDER | FT_LOAD_COLOR)) {
-        printf("[WARNING] Ooopsie doopsie, a char `%lc` isn't supported...\n",
-               cmd[i]);
-      }
-
-      FT_GlyphSlot the_glyph = console->source_code_face->glyph;
-      // See console note
-      if (the_glyph->bitmap.width == 0 || the_glyph->bitmap.rows == 0) {
-        the_glyph->bitmap.width = 64;
-        the_glyph->bitmap.rows = 64;
-        the_glyph->bitmap.buffer = console->white_space;
-      }
-
-      unsigned data_size = the_glyph->bitmap.width * the_glyph->bitmap.width;
-      console->textures[console->texture_count] = (texture_t){
-          .c = 1,
-          .width = the_glyph->bitmap.width,
-          .height = the_glyph->bitmap.rows,
-          .data =
-              memcpy(malloc(data_size), the_glyph->bitmap.buffer, data_size),
-          .label = "character",
-      };
-
-      new_texture_count++;
-
-      CL_Characters_set(&console->character_bank, cmd[i],
-                        (character_t){
-                            console->texture_count,
-                            {
-                                the_glyph->bitmap.width,
-                                the_glyph->bitmap.rows,
-                            },
-                            {
-                                the_glyph->bitmap_left,
-                                the_glyph->bitmap_top,
-                            },
-                            the_glyph->advance.x,
-                        });
-
-      console->texture_count++;
-
-      character = CL_Characters_get(&console->character_bank, cmd[i]);
+      printf("pls cry about %lc\n", console->history[i]);
+      continue;
     }
 
     state->texts[i + off].color[0] = current_color[0];
@@ -466,21 +303,53 @@ void CL_DrawConsole(client_t *client, game_state_t *state,
     state->texts[i + off].pos[1] += (48 + top);
 
     // printf("advance --> %d\n", character->advance);
-    state->texts[i + off].size[0] = character->size[0];
-    state->texts[i + off].size[1] = character->size[1];
+    state->texts[i + off].size[0] = character->size[0] / (float)screen_width;
+    state->texts[i + off].size[1] = character->size[1] / (float)screen_height;
+
+    state->texts[i + off].pos[0] /= (float)screen_width;
+    state->texts[i + off].pos[1] /= (float)screen_height;
 
     current_pos += (float)(character->advance >> 6);
   }
 
-  state->text_count = history_len + cmd_len;
+  off += history_len;
 
-  // Let's upload new glyphs texture
-  if (new_texture_count) {
-    VK_UpdateFontTextures(CL_GetRend(client),
-                          console->textures +
-                              (console->texture_count - new_texture_count),
-                          new_texture_count);
+  for (unsigned i = 0; i < cmd_len; i++) {
+    character_t *character = G_GetCharacter(game, "console", cmd[i]);
+
+    // We didn't load all possible characters, maybe it's a new one, let's load
+    // it
+    if (!character) {
+      continue;
+    }
+
+    state->texts[i + off].color[0] = current_color[0];
+    state->texts[i + off].color[1] = current_color[1];
+    state->texts[i + off].color[2] = current_color[2];
+    state->texts[i + off].color[3] = current_color[3];
+    state->texts[i + off].tex = character->texture_idx;
+    // Position according to character
+    state->texts[i + off].pos[0] = current_pos + character->bearing[0];
+    state->texts[i + off].pos[1] = -character->bearing[1];
+
+    // Position at the top left of the screen
+
+    state->texts[i + off].pos[0] -= screen_width;
+    state->texts[i + off].pos[0] += 16;
+    state->texts[i + off].pos[1] -= screen_height;
+    state->texts[i + off].pos[1] += (48 + top);
+
+    // printf("advance --> %d\n", character->advance);
+    state->texts[i + off].size[0] = character->size[0] / (float)screen_width;
+    state->texts[i + off].size[1] = character->size[1] / (float)screen_height;
+
+    state->texts[i + off].pos[0] /= (float)screen_width;
+    state->texts[i + off].pos[1] /= (float)screen_height;
+
+    current_pos += (float)(character->advance >> 6);
   }
+
+  atomic_fetch_add(&state->text_count, history_len + cmd_len);
 }
 
 bool CL_ConsoleOpened(client_console_t *console) { return console->opened; }
@@ -490,17 +359,9 @@ void CL_ToggleConsole(client_console_t *console) {
 }
 
 void CL_DestroyConsole(client_t *client, client_console_t *console) {
-  for (unsigned i = 0; i < console->texture_count; i++) {
-    free(console->textures[i].data);
-  }
-
-  CL_Characters_destroy(&console->character_bank);
   free(console->descriptions);
-  free(console->textures);
   free(console->history);
   free(console->history_temp);
-  FT_Done_Face(console->source_code_face);
-  FT_Done_FreeType(console->ft);
 
   free(console);
 }

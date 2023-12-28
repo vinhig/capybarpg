@@ -1,4 +1,5 @@
 #include "game/g_game.h"
+#include "cglm/mat4.h"
 #include "freetype/freetype.h"
 #include "vk/vk_vulkan.h"
 #include <client/cl_input.h>
@@ -6,6 +7,7 @@
 #include <stbi_image.h>
 
 #include <jps.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,11 +27,21 @@ game_t *G_CreateGame(client_t *client, char *base) {
 
   game->cpu_agents = calloc(3000, sizeof(cpu_agent_t));
 
-  game->textures = calloc(32, sizeof(texture_t));
-  game->texture_capacity = 32;
-  game->texture_count = 0;
+  game->map_textures = calloc(32, sizeof(texture_t));
+  game->map_texture_capacity = 32;
+  game->map_texture_count = 0;
 
-  game->state.fps.zoom = 0.5f;
+  game->font_textures = calloc(1024, sizeof(texture_t));
+  game->font_texture_capacity = 1024;
+  game->font_texture_count = 0;
+
+  game->state.texts = calloc(4096, sizeof(game_text_draw_t));
+  game->state.text_capacity = 4096;
+  atomic_store(&game->state.text_count, 0);
+
+  game->state.fps.zoom = 0.178f;
+  game->state.fps.pos[0] = 4.806f;
+  game->state.fps.pos[1] = 4.633f;
 
   game->base = base;
 
@@ -53,12 +65,26 @@ game_t *G_CreateGame(client_t *client, char *base) {
 
   zpl_affinity_destroy(&af);
 
-  zpl_mutex_init(&game->texture_mutex);
+  zpl_mutex_init(&game->map_texture_mutex);
+  zpl_mutex_init(&game->font_mutex);
 
   G_Materials_init(&game->material_bank, zpl_heap_allocator());
   G_ImmediateTextures_init(&game->immediate_texture_bank, zpl_heap_allocator());
   G_Walls_init(&game->wall_bank, zpl_heap_allocator());
   G_Terrains_init(&game->terrain_bank, zpl_heap_allocator());
+
+  if (FT_Init_FreeType(&game->console_ft)) {
+    printf("[ERROR] Couldn't init freetype for the game.\n");
+    return false;
+  }
+  if (FT_Init_FreeType(&game->game_ft)) {
+    printf("[ERROR] Couldn't init freetype for the console.\n");
+    return false;
+  }
+  game->white_space = calloc(128 * 128, sizeof(char));
+
+  CL_Characters_init(&game->console_character_bank, zpl_heap_allocator());
+  CL_Characters_init(&game->game_character_bank, zpl_heap_allocator());
 
   // Add "model" system at the end, just compute the model matrix for each
   // transform
@@ -117,13 +143,21 @@ void G_DestroyGame(game_t *game) {
     free(game->scenes[i].name);
   }
 
-  for (unsigned i = 0; i < game->texture_count; i++) {
-    texture_t *tex = &game->textures[i];
+  for (unsigned i = 0; i < game->map_texture_count; i++) {
+    texture_t *tex = &game->map_textures[i];
     free(tex->data);
     free(tex->label);
   }
 
-  free(game->textures);
+  free(game->map_textures);
+
+  for (unsigned i = 0; i < game->font_texture_count; i++) {
+    texture_t *tex = &game->font_textures[i];
+    free(tex->data);
+    // free(tex->label);
+  }
+
+  free(game->font_textures);
 
   G_Materials_destroy(&game->material_bank);
   G_ImmediateTextures_destroy(&game->immediate_texture_bank);
@@ -141,6 +175,11 @@ void G_DestroyGame(game_t *game) {
   }
 
   zpl_jobs_free(&game->job_sys);
+
+  FT_Done_Face(game->console_face);
+  FT_Done_Face(game->game_face);
+  FT_Done_FreeType(game->console_ft);
+  FT_Done_FreeType(game->game_ft);
 
   free(game->cpu_agents);
   free(game->scenes);
@@ -212,12 +251,16 @@ void G_DestroyGame(game_t *game) {
 
 void G_ResetGameState(game_t *game) {
   game_text_draw_t *draws = game->state.texts;
+  int count = atomic_load(&game->state.text_count);
+  memset(draws, 0, sizeof(game_text_draw_t) * count);
+
   game->state.draw_count = 0;
   memset(&game->state.draws, 0, sizeof(game->state.draws));
   game->state.texts = draws;
+  atomic_store(&game->state.text_count, 0);
 }
 
-game_state_t G_TickGame(client_t *client, game_t *game) {
+game_state_t *G_TickGame(client_t *client, game_t *game) {
   G_ResetGameState(game);
 
   unsigned w, h;
@@ -232,6 +275,8 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
   glm_ortho(-1.0 * ratio / zoom + offset_x, 1.0 * ratio / zoom + offset_x,
             -1.0f / zoom + offset_y, 1.0f / zoom + offset_y, 0.01, 50.0,
             (vec4 *)&game->state.fps.view_proj);
+
+  printf("zoom = %.03f, offset_x = %.03f, offset_y = %.03f\n", zoom, offset_x, offset_y);
 
   game->delta_time = zpl_time_rel() - game->last_time;
 
@@ -272,7 +317,6 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
             .game = game,
         };
 
-        printf("adding G_WorkerSetupTileText jobs\n");
         zpl_jobs_enqueue(&game->job_sys, G_WorkerSetupTileText, &jobs[row]);
       }
 
@@ -292,7 +336,7 @@ game_state_t G_TickGame(client_t *client, game_t *game) {
 
   VK_TickSystems(game->rend);
 
-  return game->state;
+  return &game->state;
 }
 
 texture_t G_LoadSingleTextureFromMemory(const unsigned char *pdata,
@@ -908,7 +952,7 @@ unsigned G_Add_Items(game_t *game, unsigned map, unsigned x, unsigned y,
   unsigned remaining = amount;
   unsigned s_idx = 0;
 
-  while (amount != 0 && s_idx < 3) {
+  while (remaining != 0 && s_idx < 3) {
     // Check if this stack is of the same type
     if (the_cpu_tile->stack_amounts[s_idx] == 0) {
       if (remaining >= max_stack_size) {
@@ -924,20 +968,24 @@ unsigned G_Add_Items(game_t *game, unsigned map, unsigned x, unsigned y,
       the_gpu_tile->stack_count = s_idx + 1;
     } else if (the_cpu_tile->stack_recipes[s_idx] &&
                the_item->key == the_cpu_tile->stack_recipes[s_idx]->key) {
+      printf("found a stack of same type for %s\n", the_item->name);
       unsigned can_place =
           (max_stack_size - the_cpu_tile->stack_amounts[s_idx]);
+
       if (can_place >= remaining) {
         the_cpu_tile->stack_amounts[s_idx] += remaining;
+        remaining = 0;
       } else {
         the_cpu_tile->stack_amounts[s_idx] += can_place;
         remaining -= can_place;
+        printf("the stack is full, remaining: %d\n", remaining);
       }
     }
 
     s_idx++;
   }
 
-  printf("remaining: %d\n", remaining);
+  printf("after -> %d\n", the_cpu_tile->stack_count);
 
   return remaining;
 }
@@ -1114,12 +1162,31 @@ void G_Run_Scene_QC(qcvm_t *qcvm) {
   G_Run_Scene(worker, scene_name);
 }
 
+const vec2 offsets_1[3] = {
+    {0.5, 1.0}, // stack_idx==0 / middle of the tile
+    {0.0, 0.0},
+    {0.0, 0.0},
+};
+const vec2 offsets_2[3] = {
+    {0.05, 1.2f}, // stack_idx==0 / bottom left
+    {0.60, 0.7},  // stack_idx==1 / top right
+    {0.0},
+};
+const vec2 offsets_3[3] = {
+    {-0.0, 1.37}, // bottom right
+    {-0.0, 0.50},
+    {0.80, 0.76},
+};
+
 void G_WorkerSetupTileText(void *data) {
+  unsigned screen_width, screen_height;
+
   item_text_job_t *the_job = data;
 
   // worker_t *worker = the_job->worker;
   game_t *game = the_job->game;
   map_t *the_map = &game->maps[game->current_scene->current_map];
+  CL_GetViewDim(game->client, &screen_width, &screen_height);
 
   char amount_str[256];
 
@@ -1128,74 +1195,188 @@ void G_WorkerSetupTileText(void *data) {
 
     cpu_tile_t *the_tile = &the_map->cpu_tiles[idx];
 
+    vec4 tile_pos = {(float)col, (float)the_job->row, 0.0f, 1.0f};
+    vec4 screen_space;
+
+    const vec2 *offsets = NULL;
+    float scale = 1.9f;
+
+    if (the_tile->stack_count == 1) {
+      offsets = offsets_1;
+      scale = 1.2;
+    } else if (the_tile->stack_count == 2) {
+      offsets = offsets_2;
+      scale = 1.5;
+    } else {
+      offsets = offsets_3;
+    }
+
     for (unsigned i = 0; i < 3; i++) {
       if (the_tile->stack_amounts[i] != 0) {
         sprintf(&amount_str[0], "%d", the_tile->stack_amounts[i]);
+
+        vec4 label_pos = {tile_pos[0] + (offsets[i][0] - 0.5f) / scale,
+                          tile_pos[1] + (offsets[i][1] - 0.5f) / scale, 0.0f,
+                          1.0f};
+
+        glm_mat4_mulv(game->state.fps.view_proj, label_pos, screen_space);
+
+        if (screen_space[0] > 1.0f || screen_space[0] < -1.0f ||
+            screen_space[1] > 1.0f || screen_space[1] < -1.0f) {
+          continue;
+        }
+
+        unsigned len = strlen(amount_str);
+
+        // Naive approach to center the digits, it assumes all char are 20px
+        // width
+        float current_pos = -((float)len) * 20.0f / 2.0f;
+        float start_pos = current_pos - 5.0f;
+        float max_height = 0.0f;
+        int background_idx = atomic_fetch_add_explicit(&game->state.text_count,
+                                                       1, memory_order_relaxed);
+
+        // Digits
+        for (unsigned cc = 0; cc < len; cc++) {
+          int idx = atomic_fetch_add_explicit(&game->state.text_count, 1,
+                                              memory_order_relaxed);
+
+          character_t *character =
+              CL_Characters_get(&game->game_character_bank, amount_str[cc]);
+          if (!character) {
+            continue;
+          }
+
+          game->state.texts[idx].color[0] = 1.0f;
+          game->state.texts[idx].color[1] = 1.0f;
+          game->state.texts[idx].color[2] = 1.0f;
+          game->state.texts[idx].color[3] = 1.0f;
+          game->state.texts[idx].tex = character->texture_idx;
+          game->state.texts[idx].pos[0] = screen_space[0] + (current_pos + character->bearing[0]) / (float)screen_width;
+          game->state.texts[idx].pos[1] = screen_space[1] + ((-character->bearing[1]) / (float)screen_height);
+          game->state.texts[idx].pos[2] = 0.1;
+          game->state.texts[idx].size[0] = character->size[0] / (float)screen_width;
+          game->state.texts[idx].size[1] = character->size[1] / (float)screen_height;
+          if (character->size[1] > max_height) {
+            max_height = character->size[1];
+          }
+
+          current_pos += (float)(character->advance >> 6);
+        }
+
+        character_t *character =
+            CL_Characters_get(&game->game_character_bank, 9999);
+
+        // Adding a background
+        game->state.texts[background_idx].color[0] = 0.0f;
+        game->state.texts[background_idx].color[1] = 0.0f;
+        game->state.texts[background_idx].color[2] = 0.0f;
+        game->state.texts[background_idx].color[3] = 0.4f;
+        game->state.texts[background_idx].tex = character->texture_idx;
+        game->state.texts[background_idx].pos[0] = screen_space[0] + start_pos / (float)screen_width;
+        game->state.texts[background_idx].pos[1] = screen_space[1] - ((max_height + 5.0f) / (float)screen_height);
+        game->state.texts[background_idx].pos[2] = 0.9;
+        game->state.texts[background_idx].size[0] = ((current_pos + 5.0f) - start_pos) / (float)screen_width;
+        game->state.texts[background_idx].size[1] = (max_height + 10.0f) / (float)screen_height;
       }
     }
   }
 }
 
-// void G_WorkerLoadFont(void *data) {
-//   font_job_t *the_job = data;
-//   game_t *game = the_job->game;
+void G_WorkerLoadFont(void *data) {
+  font_job_t *the_job = data;
+  game_t *game = the_job->game;
 
-//   FT_Library ft = the_job->ft;
+  FT_Library ft = the_job->ft;
 
-//   if (FT_New_Face(ft, the_job->path, 0, the_job->face)) {
-//     printf("[ERROR] Couldn't load font family "
-//            "(\"%s\") for the console.\n",
-//            the_job->path);
-//     return;
-//   }
+  if (FT_New_Face(ft, the_job->path, 0, the_job->face)) {
+    printf("[ERROR] Couldn't load font family "
+           "(\"%s\") for the console.\n",
+           the_job->path);
+    return;
+  }
 
-//   FT_Set_Pixel_Sizes(*the_job->face, 0, the_job->size);
+  FT_Set_Pixel_Sizes(*the_job->face, 0, the_job->size);
 
-//   wchar_t alphabet[] = L"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ()"
-//                        L"{}:/+-_*012345789おはよう!?èé&#<>.,\\\"ùàç []";
+  wchar_t alphabet[] = L"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ()"
+                       L"{}:/+-_*012345789おはよう!?èé&#<>.,\\\"ùàç []";
 
-//   for (unsigned i = 0; i < sizeof(alphabet) / sizeof(wchar_t); i++) {
-//     if (FT_Load_Char(*the_job->face, alphabet[i],
-//                      FT_LOAD_RENDER | FT_LOAD_COLOR)) {
-//       printf("[WARNING] Ooopsie doopsie, the char `%lc` isn't supported...\n",
-//              alphabet[i]);
-//     }
+  for (unsigned i = 0; i < sizeof(alphabet) / sizeof(wchar_t); i++) {
+    if (FT_Load_Char(*(the_job->face), alphabet[i],
+                     FT_LOAD_RENDER | FT_LOAD_COLOR)) {
+      printf("[WARNING] Ooopsie doopsie, the char `%lc` isn't supported...\n",
+             alphabet[i]);
+      continue;
+    }
 
-//     FT_GlyphSlot the_glyph = (*the_job->face)->glyph;
-//     // See console note
-//     // if (the_glyph->bitmap.width == 0 || the_glyph->bitmap.rows == 0) {
-//     //   FT_Load_Char(*the_job->face, L'_',
-//     //                FT_LOAD_RENDER | FT_LOAD_COLOR);
-//     //   the_glyph = console->source_code_face->glyph;
-//     //   the_glyph->bitmap.buffer = console->white_space;
-//     // }
+    FT_GlyphSlot the_glyph = (*the_job->face)->glyph;
+    unsigned char *pixel_data = the_glyph->bitmap.buffer;
+    // See console note
+    if (the_glyph->bitmap.width == 0 || the_glyph->bitmap.rows == 0) {
+      FT_Load_Char(*the_job->face, L'_', FT_LOAD_RENDER | FT_LOAD_COLOR);
+      the_glyph = (*the_job->face)->glyph;
+      pixel_data = game->white_space;
+    }
 
-//     unsigned data_size = the_glyph->bitmap.width * the_glyph->bitmap.rows;
-//     console->textures[console->texture_count] = (texture_t){
-//         .c = 1,
-//         .width = the_glyph->bitmap.width,
-//         .height = the_glyph->bitmap.rows,
-//         .data = memcpy(malloc(data_size), the_glyph->bitmap.buffer, data_size),
-//         .label = "character",
-//     };
+    unsigned data_size = the_glyph->bitmap.width * the_glyph->bitmap.rows;
+    pixel_data = memcpy(malloc(data_size), pixel_data, data_size);
 
-//     console->texture_count++;
+    zpl_mutex_lock(&game->font_mutex);
+    game->font_textures[game->font_texture_count] = (texture_t){
+        .c = 1,
+        .width = the_glyph->bitmap.width,
+        .height = the_glyph->bitmap.rows,
+        .data = pixel_data,
+        .label = "character",
+    };
 
-//     CL_Characters_set(&console->character_bank, alphabet[i],
-//                       (character_t){
-//                           i,
-//                           {
-//                               the_glyph->bitmap.width,
-//                               the_glyph->bitmap.rows,
-//                           },
-//                           {
-//                               the_glyph->bitmap_left,
-//                               the_glyph->bitmap_top,
-//                           },
-//                           the_glyph->advance.x,
-//                       });
-//   }
-// }
+    CL_Characters_set(the_job->character_bank, alphabet[i],
+                      (character_t){
+                          game->font_texture_count,
+                          {
+                              the_glyph->bitmap.width,
+                              the_glyph->bitmap.rows,
+                          },
+                          {
+                              the_glyph->bitmap_left,
+                              the_glyph->bitmap_top,
+                          },
+                          the_glyph->advance.x,
+                      });
+    game->font_texture_count++;
+    zpl_mutex_unlock(&game->font_mutex);
+  }
+
+  // Adding a blank character used to draw background
+  zpl_mutex_lock(&game->font_mutex);
+  unsigned char *blank = malloc(64 * 64);
+  for (unsigned i = 0; i < 64 * 64; i++) {
+    blank[i] = 255;
+  }
+  game->font_textures[game->font_texture_count] = (texture_t){
+      .c = 1,
+      .width = 64,
+      .height = 64,
+      .data = blank,
+      .label = "character",
+  };
+
+  CL_Characters_set(the_job->character_bank, 9999,
+                    (character_t){
+                        game->font_texture_count,
+                        {
+                            0,
+                            0,
+                        },
+                        {
+                            0,
+                            0,
+                        },
+                        0,
+                    });
+  game->font_texture_count++;
+  zpl_mutex_unlock(&game->font_mutex);
+}
 
 void G_WorkerLoadTexture(void *data) {
   texture_job_t *the_job = data;
@@ -1212,17 +1393,17 @@ void G_WorkerLoadTexture(void *data) {
     return;
   }
 
-  zpl_mutex_lock(&game->texture_mutex);
-  if (game->texture_count == game->texture_capacity) {
-    game->texture_capacity *= 2;
-    game->textures =
-        realloc(game->textures, game->texture_capacity * sizeof(texture_t));
+  zpl_mutex_lock(&game->map_texture_mutex);
+  if (game->map_texture_count == game->map_texture_capacity) {
+    game->map_texture_capacity *= 2;
+    game->map_textures = realloc(
+        game->map_textures, game->map_texture_capacity * sizeof(texture_t));
   }
-  game->textures[game->texture_count] = tex;
-  *the_job->dest_text = game->texture_count;
-  game->texture_count++;
+  game->map_textures[game->map_texture_count] = tex;
+  *the_job->dest_text = game->map_texture_count;
+  game->map_texture_count++;
 
-  zpl_mutex_unlock(&game->texture_mutex);
+  zpl_mutex_unlock(&game->map_texture_mutex);
 }
 
 void G_Load_Game(worker_t *worker) {
@@ -1233,10 +1414,31 @@ void G_Load_Game(worker_t *worker) {
   // Load the default texture, that'll have a null index (index == 0)
   // So, everytime there is an error, it'll be displayed
   // WARNING: kinda weeb stuff
-  game->textures[0] = G_LoadSingleTextureFromMemory(
+  game->map_textures[0] = G_LoadSingleTextureFromMemory(
       &no_image[0], no_image_size,
       memcpy(malloc(23), "resources/no_image.png", 23));
-  game->texture_count = 1;
+  game->map_texture_count = 1;
+
+  font_job_t font_job_console = {
+      .game = game,
+      .ft = game->console_ft,
+      .character_bank = &game->console_character_bank,
+      .face = &game->console_face,
+      .size = 48,
+      .path = "../source/resources/JF-Dot-Paw16.ttf",
+  };
+
+  font_job_t font_job_game = {
+      .game = game,
+      .ft = game->game_ft,
+      .character_bank = &game->game_character_bank,
+      .face = &game->game_face,
+      .size = 24,
+      .path = "../source/resources/InterDisplay-ExtraBold.ttf",
+  };
+
+  zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadFont, &font_job_console);
+  zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadFont, &font_job_game);
 
   texture_job_t *texture_jobs =
       calloc(zpl_array_count(game->material_bank.entries) * 3 +
@@ -1427,15 +1629,17 @@ void G_Load_Game(worker_t *worker) {
   while (!zpl_jobs_done(&game->job_sys)) {
     zpl_jobs_process(&game->job_sys);
 
-    game_state_t state = G_TickGame(game->client, game);
+    game_state_t *state = G_TickGame(game->client, game);
 
-    CL_DrawClient(game->client, &state);
+    CL_DrawClient(game->client, game, state);
   }
 
   printf("[VERBOSE] Loading game took `%f` ms\n",
          (float)(zpl_time_rel() - now));
 
-  VK_UploadMapTextures(game->rend, game->textures, game->texture_count);
+  VK_UploadMapTextures(game->rend, game->map_textures, game->map_texture_count);
+  VK_UploadFontTextures(game->rend, game->font_textures,
+                        game->font_texture_count);
 
   G_Run_Scene(worker, game->next_scene);
 
@@ -2046,4 +2250,16 @@ void G_AddPawn(client_t *client, game_t *game, struct Transform *transform,
   VK_Add_Model_Transform(rend, entity, NULL);
   VK_Add_Agent(rend, entity, &agent);
   VK_Add_Sprite(rend, entity, sprite);
+}
+
+character_t *G_GetCharacter(game_t *game, const char *family, wchar_t c) {
+  // TODO: we only compare the first letter, cause we only have two font family
+  // available, sorry for that
+  if (family[0] == 'c') { // "console"
+    return CL_Characters_get(&game->console_character_bank, c);
+  } else if (family[0] == 'g') { // "game"
+    return CL_Characters_get(&game->game_character_bank, c);
+  }
+
+  return NULL;
 }

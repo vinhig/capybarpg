@@ -34,14 +34,14 @@ void CL_GetViewDim(client_t *client, unsigned *width, unsigned *height);
 
 void CL_UpdateClient(client_t *client);
 
-void CL_DrawClient(client_t *client, game_state_t *state);
+void CL_DrawClient(client_t *client, game_t* game, game_state_t *state);
 
 void CL_DestroyClient(client_t *client);
 
 void CL_ExitClient(client_t *client);
 
 bool CL_InitConsole(client_t *client, client_console_t **console);
-void CL_DrawConsole(client_t *client, game_state_t *state,
+void CL_DrawConsole(client_t *client, game_t* game, game_state_t *state,
                     client_console_t *console);
 void CL_DestroyConsole(client_t *client, client_console_t *console);
 bool CL_ConsoleOpened(client_console_t *console);

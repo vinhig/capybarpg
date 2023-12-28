@@ -1,7 +1,9 @@
 #pragma once
 
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <wchar.h>
 
 #include "cglm/types.h"
 
@@ -23,8 +25,9 @@ typedef struct game_immediate_draw_t {
 
 typedef struct game_text_draw_t {
   vec4 color;
-  vec2 pos;
+  vec4 pos;
   vec2 size;
+
   unsigned tex;
 } game_text_draw_t;
 
@@ -45,7 +48,7 @@ typedef struct game_state_t {
   // This is updated by the console
   // but stored in game state
   game_text_draw_t *texts;
-  unsigned text_count;
+  atomic_int text_count;
   unsigned text_capacity;
 
 } game_state_t;
@@ -150,10 +153,12 @@ void G_AddPawn(client_t *client, game_t *game, struct Transform *transform,
 void G_AddFurniture(client_t *client, game_t *game, struct Transform *transform,
                     struct Sprite *sprite, struct Immovable *immovable);
 
-game_state_t G_TickGame(client_t *client, game_t *game);
+game_state_t *G_TickGame(client_t *client, game_t *game);
 
 void G_DestroyGame(game_t *game);
 
 bool G_Load(client_t *client, game_t *game);
 
 void G_Rectangle(ivec2 start, ivec2 end, int *indices, int *count);
+
+character_t *G_GetCharacter(game_t *game, const char *family, wchar_t c);

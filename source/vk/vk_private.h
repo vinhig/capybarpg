@@ -237,6 +237,7 @@ struct vk_rend_t {
   VkSampler nearest_sampler;
   VkSampler linear_sampler;
   VkSampler anisotropy_sampler;
+  VkSampler font_sampler;
 
   vk_gbuffer_t *gbuffer;
   vk_immediate_t *immediate;

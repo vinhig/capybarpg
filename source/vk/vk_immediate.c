@@ -442,35 +442,10 @@ bool VK_InitImmediate(vk_rend_t *rend) {
 }
 
 void VK_DrawImmediate(vk_rend_t *rend, game_state_t *state) {
-  memset(rend->text->text_data, 0, sizeof(game_text_draw_t) * 4096);
-  struct Character {
-    vec4 color;
-    vec2 pos;
-    vec2 size;
-    uint texture;
-  };
+  memset(rend->text->text_data, 0, sizeof(game_text_draw_t) * state->text_count);
 
-  for (unsigned i = 0; i < state->text_count; i++) {
-    ((struct Character *)rend->text->text_data)[i].texture =
-        state->texts[i].tex;
-    ((struct Character *)rend->text->text_data)[i].pos[0] =
-        state->texts[i].pos[0];
-    ((struct Character *)rend->text->text_data)[i].pos[1] =
-        state->texts[i].pos[1];
-    ((struct Character *)rend->text->text_data)[i].size[0] =
-        state->texts[i].size[0];
-    ((struct Character *)rend->text->text_data)[i].size[1] =
-        state->texts[i].size[1];
+  memcpy(rend->text->text_data, state->texts, sizeof(game_text_draw_t) * state->text_count);
 
-    ((struct Character *)rend->text->text_data)[i].color[0] =
-        state->texts[i].color[0];
-    ((struct Character *)rend->text->text_data)[i].color[1] =
-        state->texts[i].color[1];
-    ((struct Character *)rend->text->text_data)[i].color[2] =
-        state->texts[i].color[2];
-    ((struct Character *)rend->text->text_data)[i].color[3] =
-        state->texts[i].color[3];
-  }
   VkCommandBuffer cmd = rend->graphics_command_buffer[rend->current_frame % 3];
 
   VkRenderingInfo render_info = {
@@ -487,7 +462,7 @@ void VK_DrawImmediate(vk_rend_t *rend, game_state_t *state) {
               .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
               .imageView = rend->gbuffer->albedo_target.image_view,
               .imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL,
-              .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+              .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
               .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
           },
       .pDepthAttachment = &rend->gbuffer->depth_target.attachment_info,
