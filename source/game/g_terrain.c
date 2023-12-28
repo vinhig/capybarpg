@@ -54,8 +54,7 @@ void G_Rectangle(ivec2 start, ivec2 end, int *indices, int *count) {
 }
 
 void G_Map_Set_Terrain_Type_QC(qcvm_t *qcvm) {
-  worker_t *worker = qcvm_get_user_data(qcvm);
-  game_t *game = worker->game;
+  game_t *game = qcvm_get_user_data(qcvm);
 
   int map = qcvm_get_parm_int(qcvm, 0);
   float x = qcvm_get_parm_float(qcvm, 1);
@@ -119,8 +118,7 @@ void G_Map_Set_Terrain_Type_QC(qcvm_t *qcvm) {
 }
 
 void G_Map_Get_Terrain_Type_QC(qcvm_t *qcvm) {
-  worker_t *worker = qcvm_get_user_data(qcvm);
-  game_t *game = worker->game;
+  game_t *game = qcvm_get_user_data(qcvm);
 
   int map = qcvm_get_parm_int(qcvm, 0);
   float x = qcvm_get_parm_float(qcvm, 1);
@@ -281,7 +279,10 @@ void G_Add_Wall(game_t *game, int map, int x, int y, float health,
   zpl_mutex_lock(&game->maps[map].mutex);
 
   map_t *the_map = &game->maps[map];
-  jps_set_obstacle(the_map->jps_map, x, y, 1);
+  for (unsigned i = 0; i < 16; i++) {
+    jps_set_obstacle(the_map->jps_maps[i], x, y, 1);
+  }
+
   unsigned idx = y * the_map->w + x;
   // Place the wall with its correct orientation
   the_map->gpu_tiles[idx].wall_texture =

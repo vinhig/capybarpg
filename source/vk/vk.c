@@ -1248,6 +1248,7 @@ void VK_DestroyRend(vk_rend_t *rend) {
   vkDestroySampler(rend->device, rend->nearest_sampler, NULL);
   vkDestroySampler(rend->device, rend->linear_sampler, NULL);
   vkDestroySampler(rend->device, rend->anisotropy_sampler, NULL);
+  vkDestroySampler(rend->device, rend->font_sampler, NULL);
 
   vkDestroyDescriptorSetLayout(rend->device, rend->global_ubo_desc_set_layout,
                                NULL);

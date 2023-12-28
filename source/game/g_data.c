@@ -13,3 +13,6 @@ ZPL_TABLE_DEFINE(texture_bank_t, G_ImmediateTextures_, texture_t)
 
 ZPL_TABLE_DECLARE(extern, terrain_bank_t, G_Terrains_, terrain_t)
 ZPL_TABLE_DEFINE(terrain_bank_t, G_Terrains_, terrain_t)
+
+ZPL_TABLE_DECLARE(extern, animal_bank_t, G_Animals_, animal_t)
+ZPL_TABLE_DEFINE(animal_bank_t, G_Animals_, animal_t)

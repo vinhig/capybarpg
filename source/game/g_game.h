@@ -92,6 +92,21 @@ typedef struct terrain_t {
   char *variant3_path;
 } terrain_t;
 
+typedef struct animal_t {
+  char *name;
+
+  unsigned revision;
+
+  unsigned north_tex;
+  char *north_path;
+
+  unsigned south_tex;
+  char *south_path;
+
+  unsigned east_tex;
+  char *east_path;
+} animal_t;
+
 typedef struct wall_t {
   char *name;
 

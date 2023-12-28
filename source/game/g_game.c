@@ -1,6 +1,8 @@
 #include "game/g_game.h"
 #include "cglm/mat4.h"
 #include "freetype/freetype.h"
+#include "intlist.h"
+#include "qcvm.h"
 #include "vk/vk_vulkan.h"
 #include <client/cl_input.h>
 #include <game/g_private.h>
@@ -56,13 +58,6 @@ game_t *G_CreateGame(client_t *client, char *base) {
   zpl_jobs_init_with_limit(&game->job_sys, zpl_heap_allocator(),
                            game->worker_count, 10000);
 
-  for (unsigned w = 0; w < game->worker_count; w++) {
-    game->workers[w] = (worker_t){
-        .game = game,
-        .id = w,
-    };
-  }
-
   zpl_affinity_destroy(&af);
 
   zpl_mutex_init(&game->map_texture_mutex);
@@ -72,6 +67,7 @@ game_t *G_CreateGame(client_t *client, char *base) {
   G_ImmediateTextures_init(&game->immediate_texture_bank, zpl_heap_allocator());
   G_Walls_init(&game->wall_bank, zpl_heap_allocator());
   G_Terrains_init(&game->terrain_bank, zpl_heap_allocator());
+  G_Animals_init(&game->animal_bank, zpl_heap_allocator());
 
   if (FT_Init_FreeType(&game->console_ft)) {
     printf("[ERROR] Couldn't init freetype for the game.\n");
@@ -164,14 +160,15 @@ void G_DestroyGame(game_t *game) {
   G_Walls_destroy(&game->wall_bank);
   G_Terrains_destroy(&game->terrain_bank);
 
-  for (unsigned i = 0; i < game->worker_count; i++) {
-    // jps_destroy(game->workers[i].)
-    qcvm_free(game->workers[i].qcvm);
+  for (unsigned i = 0; i < 16; i++) {
+    qcvm_free(game->qcvms[i]);
   }
 
   for (unsigned i = 0; i < game->map_count; i++) {
     free(game->maps[i].cpu_tiles);
-    jps_destroy(game->maps[i].jps_map);
+    for (unsigned j = 0; j < 16; j++) {
+      jps_destroy(game->maps[i].jps_maps[j]);
+    }
   }
 
   zpl_jobs_free(&game->job_sys);
@@ -186,68 +183,83 @@ void G_DestroyGame(game_t *game) {
   free(game);
 }
 
-// void G_UpdateAgents(game_t *game, unsigned i) {
-//   if (game->cpu_agents[i].state == AGENT_PATH_FINDING) {
-//     // G_PathFinding(&game->workers[0], i);
-//     jps_set_start(game->map, game->transforms[i].position[0],
-//                   game->transforms[i].position[1]);
-//     jps_set_end(game->map, game->cpu_agents[i].target[0],
-//                 game->cpu_agents[i].target[1]);
+void G_WorkerUpdateAgents(void *data) {
+  path_finding_job_t *the_job = data;
+  game_t *game = the_job->game;
+  unsigned agent = the_job->agent;
+  map_t *the_map = &game->maps[the_job->map];
 
-//     IntList *list = il_create(2);
-//     jps_path_finding(game->map, 2, list);
+  if (game->cpu_agents[agent].state == AGENT_PATH_FINDING) {
+    // Find a jps_map that is available hehe
+    // That's called lock free stuffy stuff
+    int jps_idx = atomic_fetch_add_explicit(&game->state.text_count,
+                                            1, memory_order_relaxed);
+    struct map *jps_map = the_map->jps_maps[jps_idx];
 
-//     unsigned size = il_size(list);
+    jps_set_start(jps_map, game->transforms[agent].position[0],
+                  game->transforms[agent].position[1]);
+    jps_set_end(jps_map, game->cpu_agents[agent].target[0],
+                game->cpu_agents[agent].target[1]);
 
-//     game->cpu_agents[i].computed_path.count = size;
-//     game->cpu_agents[i].computed_path.current = 0;
-//     game->cpu_agents[i].computed_path.points = calloc(size, sizeof(vec2));
-//     for (unsigned p = 0; p < size; p++) {
-//       int x = il_get(list, (size - p - 1), 0);
-//       int y = il_get(list, (size - p - 1), 1);
-//       game->cpu_agents[i].computed_path.points[p][0] = x;
-//       game->cpu_agents[i].computed_path.points[p][1] = y;
-//     }
+    IntList *list = il_create(2);
+    jps_path_finding(jps_map, 2, list);
 
-//     game->cpu_agents[i].state = AGENT_MOVING;
-//   } else if (game->cpu_agents[i].state == AGENT_MOVING) {
-//     unsigned c = game->cpu_agents[i].computed_path.current;
-//     if (c < game->cpu_agents[i].computed_path.count) {
-//       // Compute the direction to take
-//       vec2 next_pos;
-//       glm_vec2(game->cpu_agents[i].computed_path.points[c], next_pos);
-//       vec2 d;
-//       glm_vec2_sub(next_pos, game->transforms[i].position, d);
-//       vec2 s;
-//       glm_vec2_sign(d, s);
-//       d[0] = glm_min(fabs(d[0]), game->cpu_agents[i].speed) * s[0];
-//       d[1] = glm_min(fabs(d[1]), game->cpu_agents[i].speed) * s[1];
+    unsigned size = il_size(list);
 
-//       // Reflect the direction on the related GPU agent
-//       // Visual and Animation is supposed to change
-//       vec2 supposed_d = {
-//           1.0f * s[0],
-//           1.0f * s[1],
-//       };
-//       if (supposed_d[0] != 0.0f || supposed_d[1] != 0.0f) {
-//         game->gpu_agents[i].direction[0] = supposed_d[0];
-//         game->gpu_agents[i].direction[1] = supposed_d[1];
-//       }
+    game->cpu_agents[agent].computed_path.count = size;
+    game->cpu_agents[agent].computed_path.current = 0;
+    game->cpu_agents[agent].computed_path.points = calloc(size, sizeof(vec2));
+    for (unsigned p = 0; p < size; p++) {
+      int x = il_get(list, (size - p - 1), 0);
+      int y = il_get(list, (size - p - 1), 1);
+      game->cpu_agents[agent].computed_path.points[p][0] = x;
+      game->cpu_agents[agent].computed_path.points[p][1] = y;
+    }
 
-//       // Apply the movement
-//       glm_vec2_add(game->transforms[i].position, d,
-//                    game->transforms[i].position);
-//       if (game->transforms[i].position[0] == next_pos[0] &&
-//           game->transforms[i].position[1] == next_pos[1]) {
-//         game->cpu_agents[i].computed_path.current++;
-//       }
-//     } else {
-//       game->cpu_agents[i].state = AGENT_NOTHING;
-//       game->gpu_agents[i].direction[0] = 0.0f;
-//       game->gpu_agents[i].direction[1] = 0.0f;
-//     }
-//   }
-// }
+    game->cpu_agents[agent].state = AGENT_MOVING;
+
+    atomic_fetch_add_explicit(&game->state.text_count,
+                              -1, memory_order_relaxed);
+
+    il_destroy(list);
+  } else if (game->cpu_agents[agent].state == AGENT_MOVING) {
+    unsigned c = game->cpu_agents[agent].computed_path.current;
+    if (c < game->cpu_agents[agent].computed_path.count) {
+      // Compute the direction to take
+      vec2 next_pos;
+      glm_vec2(game->cpu_agents[agent].computed_path.points[c], next_pos);
+      vec2 d;
+      glm_vec2_sub(next_pos, game->transforms[agent].position, d);
+      vec2 s;
+      glm_vec2_sign(d, s);
+      d[0] = glm_min(fabs(d[0]), game->cpu_agents[agent].speed) * s[0];
+      d[1] = glm_min(fabs(d[1]), game->cpu_agents[agent].speed) * s[1];
+
+      // Reflect the direction on the related GPU agent
+      // Visual and Animation is supposed to change
+      vec2 supposed_d = {
+          1.0f * s[0],
+          1.0f * s[1],
+      };
+      if (supposed_d[0] != 0.0f || supposed_d[1] != 0.0f) {
+        game->gpu_agents[agent].direction[0] = supposed_d[0];
+        game->gpu_agents[agent].direction[1] = supposed_d[1];
+      }
+
+      // Apply the movement
+      glm_vec2_add(game->transforms[agent].position, d,
+                   game->transforms[agent].position);
+      if (game->transforms[agent].position[0] == next_pos[0] &&
+          game->transforms[agent].position[1] == next_pos[1]) {
+        game->cpu_agents[agent].computed_path.current++;
+      }
+    } else {
+      game->cpu_agents[agent].state = AGENT_NOTHING;
+      game->gpu_agents[agent].direction[0] = 0.0f;
+      game->gpu_agents[agent].direction[1] = 0.0f;
+    }
+  }
+}
 
 void G_ResetGameState(game_t *game) {
   game_text_draw_t *draws = game->state.texts;
@@ -284,15 +296,15 @@ game_state_t *G_TickGame(client_t *client, game_t *game) {
     printf("[WARNING] No current scene hehe...\n");
   } else {
     for (unsigned i = 0; i < game->current_scene->update_listener_count; i++) {
-      qcvm_set_parm_float(game->workers[0].qcvm, 0, game->delta_time);
-      qcvm_run(game->workers[0].qcvm,
+      qcvm_set_parm_float(game->qcvms[0], 0, game->delta_time);
+      qcvm_run(game->qcvms[0],
                game->current_scene->update_listeners[i].qcvm_func);
     }
 
     for (unsigned i = 0; i < game->current_scene->camera_update_listener_count;
          i++) {
-      qcvm_set_parm_float(game->workers[0].qcvm, 0, game->delta_time);
-      qcvm_run(game->workers[0].qcvm,
+      qcvm_set_parm_float(game->qcvms[0], 0, game->delta_time);
+      qcvm_run(game->qcvms[0],
                game->current_scene->camera_update_listeners[i].qcvm_func);
     }
 
@@ -384,7 +396,10 @@ int G_Create_Map(game_t *game, unsigned w, unsigned h) {
   // TODO: the jps map should be per worker
   map_t *the_map = &game->maps[game->map_count];
   zpl_mutex_lock(&the_map->mutex);
-  the_map->jps_map = jps_create(w, h);
+  for (unsigned i = 0; i < 16; i++) {
+    the_map->jps_maps[i] = jps_create(w, h);
+  }
+  atomic_store(&the_map->jps_idx, 0);
   the_map->w = w;
   the_map->h = h;
   the_map->gpu_tiles = VK_GetMap(game->rend, game->map_count);
@@ -407,14 +422,7 @@ int G_Create_Map(game_t *game, unsigned w, unsigned h) {
 }
 
 void G_Create_Map_QC(qcvm_t *qcvm) {
-  worker_t *worker = (worker_t *)qcvm_get_user_data(qcvm);
-  game_t *game = worker->game;
-
-  if (worker->id != 0) {
-    printf(
-        "`G_Create_Map_QC` can only be called from thread 0 (main thread).\n");
-    return;
-  }
+  game_t *game = qcvm_get_user_data(qcvm);
 
   float w = qcvm_get_parm_float(qcvm, 0);
   float h = qcvm_get_parm_float(qcvm, 1);
@@ -439,8 +447,7 @@ void G_Create_Map_QC(qcvm_t *qcvm) {
 }
 
 void G_Set_Current_Map_QC(qcvm_t *qcvm) {
-  worker_t *worker = qcvm_get_user_data(qcvm);
-  game_t *game = worker->game;
+  game_t *game = qcvm_get_user_data(qcvm);
 
   const char *scene_name = qcvm_get_parm_string(qcvm, 0);
   int map = qcvm_get_parm_int(qcvm, 1);
@@ -519,6 +526,7 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
   zpl_json_object *materials = zpl_adt_find(&recipes, "materials", false);
   zpl_json_object *walls = zpl_adt_find(&recipes, "walls", false);
   zpl_json_object *furnitures = zpl_adt_find(&recipes, "furnitures", false);
+  zpl_json_object *animals = zpl_adt_find(&recipes, "animals", false);
 
   zpl_unused(furnitures);
 
@@ -916,20 +924,88 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
     printf("[DEBUG] No 'walls' specified in `%s`.\n", path);
   }
 
+  if (animals && animals->type == ZPL_ADT_TYPE_ARRAY) {
+    unsigned size = zpl_array_count(animals->nodes);
+
+    for (unsigned i = 0; i < size; i++) {
+      zpl_adt_node *element = &animals->nodes[i];
+      zpl_adt_node *id_node = zpl_adt_find(element, "id", false);
+
+      if (!id_node || id_node->type != ZPL_ADT_TYPE_STRING) {
+        printf("[WARNING] The element %d in the 'animals' list doesn't have "
+               "an ID (of type string).\n",
+               i);
+        continue;
+      } else {
+        zpl_u64 key = zpl_fnv64(id_node->string, strlen(id_node->string));
+        // Does the bank contains this element? If not create an empty one.
+        animal_t *animal = G_Animals_get(&game->animal_bank, key);
+
+        if (!animal) {
+          G_Animals_set(&game->animal_bank, key, (animal_t){.revision = 1});
+          animal = G_Animals_get(&game->animal_bank, key);
+        } else {
+          animal->revision += 1;
+        }
+
+        zpl_adt_node *name_node = zpl_adt_find(element, "name", false);
+        zpl_adt_node *sprites_node = zpl_adt_find(element, "sprites", false);
+
+        zpl_adt_node *north_node = NULL;
+        zpl_adt_node *south_node = NULL;
+        zpl_adt_node *east_node = NULL;
+
+        // Some field may be NULL if not present, we don't care
+        if (name_node && name_node->type == ZPL_ADT_TYPE_STRING) {
+          if (animal->name) {
+            free(animal->name);
+          }
+          animal->name =
+              memcpy(malloc(strlen(name_node->string) + 1), name_node->string,
+                     strlen(name_node->string) + 1);
+        }
+
+        if (sprites_node && sprites_node->type == ZPL_ADT_TYPE_OBJECT) {
+          north_node = zpl_adt_find(sprites_node, "north", false);
+          south_node = zpl_adt_find(sprites_node, "east", false);
+          east_node = zpl_adt_find(sprites_node, "south", false);
+
+          if (north_node && north_node->type == ZPL_ADT_TYPE_STRING) {
+            if (animal->north_path) {
+              free(animal->north_path);
+            }
+            animal->north_path = memcpy(
+                malloc(strlen(north_node->string) + 1),
+                north_node->string, strlen(north_node->string) + 1);
+          }
+          if (south_node && south_node->type == ZPL_ADT_TYPE_STRING) {
+            if (animal->south_path) {
+              free(animal->south_path);
+            }
+            animal->south_path = memcpy(
+                malloc(strlen(south_node->string) + 1),
+                south_node->string, strlen(south_node->string) + 1);
+          }
+          if (east_node && east_node->type == ZPL_ADT_TYPE_STRING) {
+            if (animal->east_path) {
+              free(animal->east_path);
+            }
+            animal->east_path = memcpy(
+                malloc(strlen(east_node->string) + 1),
+                east_node->string, strlen(east_node->string) + 1);
+          }
+        }
+      }
+    }
+  }
+
   free(content);
   zpl_json_free(&recipes);
   return true;
 }
 
 void G_Add_Recipes_QC(qcvm_t *qcvm) {
-  worker_t *worker = (worker_t *)qcvm_get_user_data(qcvm);
-  game_t *game = worker->game;
-
-  if (worker->id != 0) {
-    printf(
-        "`G_Add_Recipes_QC` can only be called from thread 0 (main thread).\n");
-    return;
-  }
+  game_t *game = qcvm_get_user_data(qcvm);
 
   const char *path = qcvm_get_parm_string(qcvm, 0);
   bool required = qcvm_get_parm_int(qcvm, 1);
@@ -985,8 +1061,7 @@ unsigned G_Add_Items(game_t *game, unsigned map, unsigned x, unsigned y,
 }
 
 void G_Add_Items_QC(qcvm_t *qcvm) {
-  worker_t *worker = qcvm_get_user_data(qcvm);
-  game_t *game = worker->game;
+  game_t *game = qcvm_get_user_data(qcvm);
 
   int map = qcvm_get_parm_int(qcvm, 0);
   float x = qcvm_get_parm_float(qcvm, 1);
@@ -1051,7 +1126,14 @@ bool G_Find_Nearest_Items(unsigned map, unsigned x, unsigned y,
   return false;
 }
 
-void G_Find_Nearest_Items_QC(qcvm_t *qcvm) {}
+void G_Find_Nearest_Items_QC(qcvm_t *qcvm) {
+  printf("todo G_Find_Nearest_Items_QC\n");
+  exit(-1);
+}
+
+void G_Add_Neutral_Animal_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+}
 
 void G_Draw_Image_Relative(game_t *game, const char *path, float w, float h,
                            float x, float y, float z) {
@@ -1102,7 +1184,7 @@ void G_Draw_Image_Relative_QC(qcvm_t *qcvm) {
   float y = qcvm_get_parm_float(qcvm, 4);
   float z = qcvm_get_parm_float(qcvm, 5);
 
-  game_t *game = ((worker_t *)qcvm_get_user_data(qcvm))->game;
+  game_t *game = qcvm_get_user_data(qcvm);
 
   G_Draw_Image_Relative(game, path, w, h, x, y, z);
 }
@@ -1111,9 +1193,8 @@ void G_Draw_Image_Relative_QC(qcvm_t *qcvm) {
 // G_Run_Scene only set the current_scene to be the specified scene. It allows
 // calling an running the start listener while the previous scene still run (for
 // example, to let the loading animation be performed).
-void G_Run_Scene(worker_t *worker, const char *scene_name) {
-  printf("G_Run_Scene(\"%s\");\n", scene_name);
-  game_t *game = worker->game;
+void G_Run_Scene(game_t *game, const char *scene_name) {
+  printf("G_Run_Scene(\"%s\") TODO: should make sure this is call from the main thread;\n", scene_name);
 
   // Fetch the scene with this name
   scene_t *scene = NULL;
@@ -1135,7 +1216,7 @@ void G_Run_Scene(worker_t *worker, const char *scene_name) {
   // G_Run_Scene. I don't know if it's a good idea...
   if (game->current_scene) {
     for (unsigned j = 0; j < game->current_scene->end_listener_count; j++) {
-      qcvm_run(worker->qcvm, game->current_scene->end_listeners[j].qcvm_func);
+      qcvm_run(game->qcvms[0], game->current_scene->end_listeners[j].qcvm_func);
     }
   }
 
@@ -1144,16 +1225,16 @@ void G_Run_Scene(worker_t *worker, const char *scene_name) {
 
   // Then call all start listeners in order
   for (unsigned j = 0; j < game->current_scene->start_listener_count; j++) {
-    qcvm_run(worker->qcvm, game->current_scene->start_listeners[j].qcvm_func);
+    qcvm_run(game->qcvms[0], game->current_scene->start_listeners[j].qcvm_func);
   }
 }
 
 void G_Run_Scene_QC(qcvm_t *qcvm) {
-  worker_t *worker = (worker_t *)qcvm_get_user_data(qcvm);
+  game_t *game = qcvm_get_user_data(qcvm);
 
   const char *scene_name = qcvm_get_parm_string(qcvm, 0);
 
-  G_Run_Scene(worker, scene_name);
+  G_Run_Scene(game, scene_name);
 }
 
 const vec2 offsets_1[3] = {
@@ -1399,9 +1480,7 @@ void G_WorkerLoadTexture(void *data) {
   zpl_mutex_unlock(&game->map_texture_mutex);
 }
 
-void G_Load_Game(worker_t *worker) {
-  game_t *game = worker->game;
-
+void G_Load_Game(game_t *game) {
   zpl_f64 now = zpl_time_rel();
 
   // Load the default texture, that'll have a null index (index == 0)
@@ -1436,7 +1515,8 @@ void G_Load_Game(worker_t *worker) {
   texture_job_t *texture_jobs =
       calloc(zpl_array_count(game->material_bank.entries) * 3 +
                  zpl_array_count(game->wall_bank.entries) * 16 +
-                 zpl_array_count(game->terrain_bank.entries) * 3,
+                 zpl_array_count(game->terrain_bank.entries) * 3 +
+                 zpl_array_count(game->animal_bank.entries) * 3,
              sizeof(texture_job_t));
 
   for (unsigned i = 0; i < zpl_array_count(game->material_bank.entries); i++) {
@@ -1618,6 +1698,36 @@ void G_Load_Game(worker_t *worker) {
     zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, variant3_job);
   }
 
+  offset += zpl_array_count(game->terrain_bank.entries) * 3;
+
+  for (unsigned i = 0; i < zpl_array_count(game->animal_bank.entries); i++) {
+    animal_bank_tEntry *entry = &game->animal_bank.entries[i];
+    animal_t *animal = &entry->value;
+
+    texture_job_t *north_job = &texture_jobs[offset + i * 3 + 0];
+    *north_job = (texture_job_t){
+        .game = game,
+        .dest_text = &animal->north_tex,
+        .path = animal->north_path,
+    };
+    texture_job_t *south_job = &texture_jobs[offset + i * 3 + 1];
+    *south_job = (texture_job_t){
+        .game = game,
+        .dest_text = &animal->south_tex,
+        .path = animal->south_path,
+    };
+    texture_job_t *east_job = &texture_jobs[offset + i * 3 + 2];
+    *east_job = (texture_job_t){
+        .game = game,
+        .dest_text = &animal->east_tex,
+        .path = animal->east_path,
+    };
+
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, north_job);
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, south_job);
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, east_job);
+  }
+
   while (!zpl_jobs_done(&game->job_sys)) {
     zpl_jobs_process(&game->job_sys);
 
@@ -1632,7 +1742,7 @@ void G_Load_Game(worker_t *worker) {
   VK_UploadMapTextures(game->rend, game->map_textures, game->map_texture_count);
   VK_UploadFontTextures(game->rend, game->font_textures, game->font_texture_count);
 
-  G_Run_Scene(worker, game->next_scene);
+  G_Run_Scene(game, game->next_scene);
 
   free(game->next_scene);
   game->next_scene = NULL;
@@ -1641,24 +1751,17 @@ void G_Load_Game(worker_t *worker) {
 }
 
 void G_Load_Game_QC(qcvm_t *qcvm) {
-  worker_t *worker = (worker_t *)qcvm_get_user_data(qcvm);
-  game_t *game = worker->game;
+  game_t *game = qcvm_get_user_data(qcvm);
 
   const char *loading_scene_name = qcvm_get_parm_string(qcvm, 0);
   const char *next_scene = qcvm_get_parm_string(qcvm, 1);
 
-  if (worker->id != 0) {
-    printf(
-        "`G_Load_Game_QC` can only be called from thread 0 (main thread).\n");
-    return;
-  }
-
   game->next_scene = memcpy(malloc(strlen(next_scene) + 1), next_scene,
                             strlen(next_scene) + 1);
 
-  G_Run_Scene(worker, loading_scene_name);
+  G_Run_Scene(game, loading_scene_name);
 
-  G_Load_Game(worker);
+  G_Load_Game(game);
 }
 
 const char *G_Get_Last_Asset_Loaded(game_t *game) {
@@ -1666,14 +1769,13 @@ const char *G_Get_Last_Asset_Loaded(game_t *game) {
 }
 
 void G_Get_Last_Asset_Loaded_QC(qcvm_t *qcvm) {
-  game_t *game = ((worker_t *)qcvm_get_user_data(qcvm))->game;
+  game_t *game = qcvm_get_user_data(qcvm);
 
   qcvm_return_string(qcvm, G_Get_Last_Asset_Loaded(game));
 }
 
 void G_Add_Wall_QC(qcvm_t *qcvm) {
-  worker_t *worker = qcvm_get_user_data(qcvm);
-  game_t *game = (game_t *)worker->game;
+  game_t *game = qcvm_get_user_data(qcvm);
   const char *recipe = qcvm_get_parm_string(qcvm, 0);
   float x = qcvm_get_parm_float(qcvm, 1);
   float y = qcvm_get_parm_float(qcvm, 2);
@@ -1753,14 +1855,7 @@ void G_Add_Scene(game_t *game, const char *name) {
 void G_Add_Scene_QC(qcvm_t *qcvm) {
   const char *scene_name = qcvm_get_parm_string(qcvm, 0);
 
-  worker_t *worker = (worker_t *)qcvm_get_user_data(qcvm);
-  game_t *game = worker->game;
-
-  if (worker->id != 0) {
-    printf(
-        "`G_Add_Scene_QC` can only be called from thread 0 (main thread).\n");
-    return;
-  }
+  game_t *game = qcvm_get_user_data(qcvm);
 
   G_Add_Scene(game, scene_name);
 }
@@ -1893,18 +1988,17 @@ void G_Add_Listener_QC(qcvm_t *qcvm) {
     return;
   }
 
-  G_Add_Listener(((worker_t *)qcvm_get_user_data(qcvm))->game, listener_type,
-                 attachment, func_id);
+  G_Add_Listener(qcvm_get_user_data(qcvm), listener_type, attachment, func_id);
 }
 
 void G_Get_Camera_Position_QC(qcvm_t *qcvm) {
-  game_t *game = ((worker_t *)qcvm_get_user_data(qcvm))->game;
+  game_t *game = qcvm_get_user_data(qcvm);
   qcvm_return_vector(qcvm, game->state.fps.pos[0], game->state.fps.pos[1],
                      game->state.fps.pos[2]);
 }
 
 void G_Set_Camera_Position_QC(qcvm_t *qcvm) {
-  game_t *game = ((worker_t *)qcvm_get_user_data(qcvm))->game;
+  game_t *game = qcvm_get_user_data(qcvm);
 
   qcvm_vec3_t vec = qcvm_get_parm_vector(qcvm, 0);
 
@@ -1914,13 +2008,13 @@ void G_Set_Camera_Position_QC(qcvm_t *qcvm) {
 }
 
 void G_Get_Camera_Zoom_QC(qcvm_t *qcvm) {
-  game_t *game = ((worker_t *)qcvm_get_user_data(qcvm))->game;
+  game_t *game = qcvm_get_user_data(qcvm);
 
   qcvm_return_float(qcvm, game->state.fps.zoom);
 }
 
 void G_Set_Camera_Zoom_QC(qcvm_t *qcvm) {
-  game_t *game = ((worker_t *)qcvm_get_user_data(qcvm))->game;
+  game_t *game = qcvm_get_user_data(qcvm);
 
   game->state.fps.zoom = qcvm_get_parm_float(qcvm, 0);
 
@@ -1928,7 +2022,7 @@ void G_Set_Camera_Zoom_QC(qcvm_t *qcvm) {
 }
 
 void G_Get_Axis_QC(qcvm_t *qcvm) {
-  game_t *game = ((worker_t *)qcvm_get_user_data(qcvm))->game;
+  game_t *game = qcvm_get_user_data(qcvm);
   const char *axis = qcvm_get_parm_string(qcvm, 0);
 
   if (strcmp(axis, "vertical") == 0) {
@@ -1941,19 +2035,19 @@ void G_Get_Axis_QC(qcvm_t *qcvm) {
 }
 
 void G_Get_Mouse_Position_QC(qcvm_t *qcvm) {
-  game_t *game = ((worker_t *)qcvm_get_user_data(qcvm))->game;
+  game_t *game = qcvm_get_user_data(qcvm);
   qcvm_return_vector(qcvm, CL_GetInput(game->client)->mouse_x,
                      CL_GetInput(game->client)->mouse_y, 0.0f);
 }
 
 void G_Get_Screen_Size_QC(qcvm_t *qcvm) {
-  game_t *game = ((worker_t *)qcvm_get_user_data(qcvm))->game;
+  game_t *game = qcvm_get_user_data(qcvm);
   unsigned w, h;
   CL_GetViewDim(game->client, &w, &h);
   qcvm_return_vector(qcvm, (float)w, (float)h, 0.0f);
 }
 
-void G_Install_QCVM(worker_t *worker) {
+void G_Install_QCVM(qcvm_t *qcvm) {
   qcvm_export_t export_G_Add_Recipes = {
       .func = G_Add_Recipes_QC,
       .name = "G_Add_Recipes",
@@ -2113,25 +2207,37 @@ void G_Install_QCVM(worker_t *worker) {
       .type = QCVM_VECTOR,
   };
 
-  qcvm_add_export(worker->qcvm, &export_G_Add_Recipes);
-  qcvm_add_export(worker->qcvm, &export_G_Load_Game);
-  qcvm_add_export(worker->qcvm, &export_G_Get_Last_Asset_Loaded);
-  qcvm_add_export(worker->qcvm, &export_G_Add_Scene);
-  qcvm_add_export(worker->qcvm, &export_G_Run_Scene);
-  qcvm_add_export(worker->qcvm, &export_G_Create_Map);
-  qcvm_add_export(worker->qcvm, &export_G_Add_Wall);
-  qcvm_add_export(worker->qcvm, &export_G_Add_Listener);
-  qcvm_add_export(worker->qcvm, &export_G_Draw_Image_Relative);
-  qcvm_add_export(worker->qcvm, &export_G_Set_Current_Map);
-  qcvm_add_export(worker->qcvm, &export_G_Get_Camera_Position);
-  qcvm_add_export(worker->qcvm, &export_G_Set_Camera_Position);
-  qcvm_add_export(worker->qcvm, &export_G_Get_Camera_Zoom);
-  qcvm_add_export(worker->qcvm, &export_G_Set_Camera_Zoom);
-  qcvm_add_export(worker->qcvm, &export_G_Get_Axis);
-  qcvm_add_export(worker->qcvm, &export_G_Get_Mouse_Position);
-  qcvm_add_export(worker->qcvm, &export_G_Get_Screen_Size);
-  qcvm_add_export(worker->qcvm, &export_G_Add_Items);
-  qcvm_add_export(worker->qcvm, &export_G_Find_Nearest_Items);
+  qcvm_export_t export_G_Add_Neutral_Animal = {
+      .func = G_Add_Neutral_Animal_QC,
+      .name = "G_Add_Neutral_Animal",
+      .argc = 5,
+      .args[0] = {.name = "map", .type = QCVM_INT},
+      .args[1] = {.name = "x", .type = QCVM_FLOAT},
+      .args[2] = {.name = "y", .type = QCVM_FLOAT},
+      .args[3] = {.name = "recipe", .type = QCVM_STRING},
+      .type = QCVM_ENTITY,
+  };
+
+  qcvm_add_export(qcvm, &export_G_Add_Recipes);
+  qcvm_add_export(qcvm, &export_G_Load_Game);
+  qcvm_add_export(qcvm, &export_G_Get_Last_Asset_Loaded);
+  qcvm_add_export(qcvm, &export_G_Add_Scene);
+  qcvm_add_export(qcvm, &export_G_Run_Scene);
+  qcvm_add_export(qcvm, &export_G_Create_Map);
+  qcvm_add_export(qcvm, &export_G_Add_Wall);
+  qcvm_add_export(qcvm, &export_G_Add_Listener);
+  qcvm_add_export(qcvm, &export_G_Draw_Image_Relative);
+  qcvm_add_export(qcvm, &export_G_Set_Current_Map);
+  qcvm_add_export(qcvm, &export_G_Get_Camera_Position);
+  qcvm_add_export(qcvm, &export_G_Set_Camera_Position);
+  qcvm_add_export(qcvm, &export_G_Get_Camera_Zoom);
+  qcvm_add_export(qcvm, &export_G_Set_Camera_Zoom);
+  qcvm_add_export(qcvm, &export_G_Get_Axis);
+  qcvm_add_export(qcvm, &export_G_Get_Mouse_Position);
+  qcvm_add_export(qcvm, &export_G_Get_Screen_Size);
+  qcvm_add_export(qcvm, &export_G_Add_Items);
+  qcvm_add_export(qcvm, &export_G_Find_Nearest_Items);
+  qcvm_add_export(qcvm, &export_G_Add_Neutral_Animal);
 }
 
 bool G_Load(client_t *client, game_t *game) {
@@ -2156,28 +2262,27 @@ bool G_Load(client_t *client, game_t *game) {
   fclose(f);
 
   for (unsigned i = 0; i < game->worker_count; i++) {
-    game->workers[i].qcvm = qcvm_from_memory(bytes, size);
-    if (!game->workers[i].qcvm) {
+    game->qcvms[i] = qcvm_from_memory(bytes, size);
+    if (!game->qcvms[i]) {
       printf("Couldn't load `%s`. Aborting, the game isn't playable.\n",
              progs_dat);
       return false;
     }
 
-    qclib_install(game->workers[i].qcvm);
-    G_Install_QCVM(&game->workers[i]);
-    G_TerrainInstall(game->workers[i].qcvm);
+    qclib_install(game->qcvms[i]);
+    G_Install_QCVM(game->qcvms[i]);
+    G_TerrainInstall(game->qcvms[i]);
 
-    game->workers[i].id = i;
-    qcvm_set_user_data(game->workers[i].qcvm, &game->workers[i]);
+    qcvm_set_user_data(game->qcvms[i], game);
   }
 
-  // Run the QuakeC main function on the first worker
-  int main_func = qcvm_find_function(game->workers[0].qcvm, "main");
+  // Run the QuakeC main function on the first vm
+  int main_func = qcvm_find_function(game->qcvms[0], "main");
   if (main_func < 1) {
-    printf("[ERROR] No main function in `progs.dat`.\n");
+    printf("[ERROR] No main function in `%s`.\n", progs_dat);
     return false;
   }
-  qcvm_run(game->workers[0].qcvm, main_func);
+  qcvm_run(game->qcvms[0], main_func);
 
   // Get the mapped data from the renderer
   game->gpu_agents = VK_GetAgents(game->rend);

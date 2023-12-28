@@ -8,6 +8,7 @@
 #include <cglm/cam.h>
 #include <cglm/cglm.h>
 #include <qcvm/qcvm.h>
+#include <stdatomic.h>
 #include <zpl/zpl.h>
 //
 #include <qclib/qclib.h>
@@ -22,6 +23,7 @@ ZPL_TABLE_DECLARE(extern, texture_bank_t, G_ImmediateTextures_, texture_t)
 ZPL_TABLE_DECLARE(extern, wall_bank_t, G_Walls_, wall_t)
 ZPL_TABLE_DECLARE(extern, terrain_bank_t, G_Terrains_, terrain_t)
 ZPL_TABLE_DECLARE(extern, character_bank_t, CL_Characters_, character_t)
+ZPL_TABLE_DECLARE(extern, animal_bank_t, G_Animals_, animal_t)
 
 typedef struct cpu_path_t {
   vec2 *points;
@@ -51,16 +53,13 @@ typedef struct cpu_tile_t {
   unsigned stack_count;
 } cpu_tile_t;
 
-typedef struct worker_t {
-  // Hey hey, I heard QCVM wasn't thread-safe. So i just init a QCVM for each
-  // worker thread. Hope you don't mind!
-  qcvm_t *qcvm;
-
-  unsigned id;
-  game_t *game;
-} worker_t;
-
 typedef struct node_t node_t;
+
+typedef struct path_finding_job_t {
+  unsigned agent;
+  unsigned map;
+  game_t* game;
+} path_finding_job_t;
 
 typedef struct item_text_job_t {
   unsigned row;
@@ -88,8 +87,8 @@ typedef struct texture_job_t {
 } texture_job_t;
 
 typedef struct map_t {
-  // TODO: shouldn't be here lmao...
-  struct map *jps_map;
+  struct map *jps_maps[16];
+  atomic_int jps_idx;
   zpl_mutex mutex;
 
   unsigned w;
@@ -142,8 +141,10 @@ struct game_t {
   unsigned *entities;
 
   unsigned worker_count;
-  worker_t workers[32];
   zpl_jobs_system job_sys;
+
+  qcvm_t * qcvms[16];
+  atomic_int qcvm_idx;
 
   char *base;
 
@@ -181,6 +182,7 @@ struct game_t {
   wall_bank_t wall_bank;
   texture_bank_t immediate_texture_bank;
   terrain_bank_t terrain_bank;
+  animal_bank_t animal_bank;
 
   // Game state, reset each frame
   // The renderer use this to draw the frame
