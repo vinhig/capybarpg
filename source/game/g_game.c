@@ -2412,11 +2412,16 @@ bool G_Load(client_t *client, game_t *game) {
 
 void G_AddFurniture(client_t *client, game_t *game, struct Transform *transform,
                     struct Sprite *sprite, struct Immovable *immovable) {
-  game->entity_count += 1;
   vk_rend_t *rend = game->rend;
-  unsigned entity =
+  int entity =
       VK_Add_Entity(rend, transform_signature | model_transform_signature |
                               sprite_signature | immovable_signature);
+
+  if (entity == -1) {
+    return;
+  }
+
+  game->entity_count += 1;
 
   VK_Add_Transform(rend, entity, transform);
   VK_Add_Model_Transform(rend, entity, NULL);
@@ -2426,11 +2431,16 @@ void G_AddFurniture(client_t *client, game_t *game, struct Transform *transform,
 
 void G_AddPawn(game_t *game, struct Transform *transform,
                struct Sprite *sprite, agent_type_t agent_type) {
-  game->entity_count += 1;
   vk_rend_t *rend = game->rend;
-  unsigned entity =
+  int entity =
       VK_Add_Entity(rend, transform_signature | model_transform_signature |
                               agent_signature | sprite_signature);
+
+  if (entity == -1) {
+    return;
+  }
+
+  game->entity_count += 1;
 
   struct Agent agent = {
       .direction =

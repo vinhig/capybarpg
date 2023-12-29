@@ -25,7 +25,7 @@ vk_system_t *VK_AddSystem_Agent_Transform(vk_rend_t *rend, const char *name,
 
 void VK_TickSystems(vk_rend_t *rend);
 
-unsigned VK_Add_Entity(vk_rend_t *rend, unsigned signature);
+int VK_Add_Entity(vk_rend_t *rend, unsigned signature);
 
 void VK_Add_Transform(vk_rend_t *rend, unsigned entity,
                       struct Transform *transform);

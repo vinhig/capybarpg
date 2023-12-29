@@ -1035,10 +1035,14 @@ void VK_TickSystems(vk_rend_t *rend) {
                 rend->logic_fence[rend->current_frame % 3]);
 }
 
-unsigned VK_Add_Entity(vk_rend_t *rend, unsigned signature) {
+int VK_Add_Entity(vk_rend_t *rend, unsigned signature) {
   size_t size = sizeof(unsigned);
   size_t offset = rend->ecs->entity_count * sizeof(unsigned);
   ((unsigned *)(rend->ecs->entities))[rend->ecs->entity_count] = signature;
+  if (rend->ecs->entity_count == 3000) {
+    printf("[ERROR] The ECS reached max number of entities (3000).\n");
+    return -1;
+  }
   rend->ecs->entity_count++;
   VK_AddWriteECS(rend, rend->ecs->e_tmp_buffer, rend->ecs->e_buffer, offset,
                  size);
