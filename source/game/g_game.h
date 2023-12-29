@@ -17,6 +17,18 @@ struct Sprite;
 struct Agent;
 struct Immovable;
 
+typedef enum agent_type_t {
+  AGENT_ANIMAL = 1 << 0,
+  AGENT_PLAYER = 1 << 1,
+  AGENT_FACTION0 = 1 << 2,
+  AGENT_FACTION1 = 1 << 3,
+  AGENT_FACTION2 = 1 << 4,
+  AGENT_FACTION3 = 1 << 5,
+  AGENT_FACTION4 = 1 << 6,
+  AGENT_FACTION5 = 1 << 7,
+  AGENT_FACTION6 = 1 << 8,
+} agent_type_t;
+
 typedef struct game_immediate_draw_t {
   float x, y, z;
   float w, h;
@@ -95,6 +107,7 @@ typedef struct terrain_t {
 typedef struct animal_t {
   char *name;
 
+  float scale;
   unsigned revision;
 
   unsigned north_tex;
@@ -159,8 +172,8 @@ bool G_LoadCurrentWorld(client_t *client, game_t *game);
 
 /// @brief Helper function to add a Pawn to the world (an entity with a
 /// Transform, Model Transform, Sprite and Agent components).
-void G_AddPawn(client_t *client, game_t *game, struct Transform *transform,
-               struct Sprite *sprite);
+void G_AddPawn(game_t *game, struct Transform *transform,
+               struct Sprite *sprite, agent_type_t agent_type);
 
 /// @brief Helper function to add a Furniture to the world (an entity with a
 /// Transform, Model Transform, and Sprite components). Register it to the list

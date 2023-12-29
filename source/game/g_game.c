@@ -17,6 +17,7 @@
 #include <time.h>
 #include <unistd.h>
 
+void G_WorkerRegisterThread(void *data);
 void G_WorkerSetupTileText(void *data);
 void G_WorkerLoadTexture(void *data);
 void G_WorkerLoadFont(void *data);
@@ -57,6 +58,10 @@ game_t *G_CreateGame(client_t *client, char *base) {
 
   zpl_jobs_init_with_limit(&game->job_sys, zpl_heap_allocator(),
                            game->worker_count, 10000);
+
+  for (unsigned i = 0; i < game->worker_count; i++) {
+    zpl_jobs_enqueue(&game->job_sys, G_WorkerRegisterThread, game);
+  }
 
   zpl_affinity_destroy(&af);
 
@@ -183,6 +188,33 @@ void G_DestroyGame(game_t *game) {
   free(game);
 }
 
+void G_WorkerRegisterThread(void *data) {
+  game_t *game = data;
+  unsigned os_id = zpl_thread_current_id();
+
+  for (unsigned i = 0; i < 16; i++) {
+    if (game->thread_ids[i].os_id == os_id) {
+      printf("Already registered thread %d\n", i);
+      return;
+    }
+  }
+
+  int my_idx = atomic_fetch_add(&game->registered_thread_idx, 1);
+  game->thread_ids[my_idx].os_id = os_id;
+}
+
+unsigned G_GetThreadId(game_t *game, unsigned os_id) {
+  for (unsigned i = 0; i < 16; i++) {
+    if (game->thread_ids[i].os_id == os_id) {
+      return i;
+    }
+  }
+
+  printf("G_GetThreadId was called from an unregistred thread. Something went super wrong...\n");
+  printf("Let's abort and pray together.\n");
+  exit(-1);
+}
+
 void G_WorkerUpdateAgents(void *data) {
   path_finding_job_t *the_job = data;
   game_t *game = the_job->game;
@@ -192,9 +224,10 @@ void G_WorkerUpdateAgents(void *data) {
   if (game->cpu_agents[agent].state == AGENT_PATH_FINDING) {
     // Find a jps_map that is available hehe
     // That's called lock free stuffy stuff
-    int jps_idx = atomic_fetch_add_explicit(&game->state.text_count,
-                                            1, memory_order_relaxed);
-    struct map *jps_map = the_map->jps_maps[jps_idx];
+
+    unsigned thread_id = G_GetThreadId(game, zpl_thread_current_id());
+
+    struct map *jps_map = the_map->jps_maps[thread_id];
 
     jps_set_start(jps_map, game->transforms[agent].position[0],
                   game->transforms[agent].position[1]);
@@ -218,9 +251,6 @@ void G_WorkerUpdateAgents(void *data) {
 
     game->cpu_agents[agent].state = AGENT_MOVING;
 
-    atomic_fetch_add_explicit(&game->state.text_count,
-                              -1, memory_order_relaxed);
-
     il_destroy(list);
   } else if (game->cpu_agents[agent].state == AGENT_MOVING) {
     unsigned c = game->cpu_agents[agent].computed_path.current;
@@ -241,6 +271,7 @@ void G_WorkerUpdateAgents(void *data) {
           1.0f * s[0],
           1.0f * s[1],
       };
+
       if (supposed_d[0] != 0.0f || supposed_d[1] != 0.0f) {
         game->gpu_agents[agent].direction[0] = supposed_d[0];
         game->gpu_agents[agent].direction[1] = supposed_d[1];
@@ -308,12 +339,38 @@ game_state_t *G_TickGame(client_t *client, game_t *game) {
                game->current_scene->camera_update_listeners[i].qcvm_func);
     }
 
+    // TODO: should allocate a memory arena or something
+    unsigned agent_count = 0;
     for (unsigned i = 0; i < game->entity_count; i++) {
       unsigned signature = game->entities[i];
 
       if (signature & agent_signature) {
-        // G_UpdateAgents(game, i);
+        agent_count++;
       }
+    }
+
+    if (agent_count != 0) {
+      path_finding_job_t *jobs = calloc(agent_count, sizeof(path_finding_job_t));
+      unsigned agent_idx = 0;
+      for (unsigned i = 0; i < game->entity_count; i++) {
+        unsigned signature = game->entities[i];
+
+        if (signature & agent_signature) {
+          jobs[agent_idx] = (path_finding_job_t){
+              .agent = i,
+              .game = game,
+              .map = game->current_scene->current_map,
+          };
+          zpl_jobs_enqueue(&game->job_sys, G_WorkerUpdateAgents, &jobs[agent_idx]);
+          agent_idx++;
+        }
+      }
+
+      while (!zpl_jobs_done(&game->job_sys)) {
+        zpl_jobs_process(&game->job_sys);
+      };
+
+      free(jobs);
     }
 
     if (game->current_scene->current_map != -1) {
@@ -399,7 +456,6 @@ int G_Create_Map(game_t *game, unsigned w, unsigned h) {
   for (unsigned i = 0; i < 16; i++) {
     the_map->jps_maps[i] = jps_create(w, h);
   }
-  atomic_store(&the_map->jps_idx, 0);
   the_map->w = w;
   the_map->h = h;
   the_map->gpu_tiles = VK_GetMap(game->rend, game->map_count);
@@ -967,8 +1023,8 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
 
         if (sprites_node && sprites_node->type == ZPL_ADT_TYPE_OBJECT) {
           north_node = zpl_adt_find(sprites_node, "north", false);
-          south_node = zpl_adt_find(sprites_node, "east", false);
-          east_node = zpl_adt_find(sprites_node, "south", false);
+          south_node = zpl_adt_find(sprites_node, "south", false);
+          east_node = zpl_adt_find(sprites_node, "east", false);
 
           if (north_node && north_node->type == ZPL_ADT_TYPE_STRING) {
             if (animal->north_path) {
@@ -1133,6 +1189,65 @@ void G_Find_Nearest_Items_QC(qcvm_t *qcvm) {
 
 void G_Add_Neutral_Animal_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
+
+  int map = qcvm_get_parm_int(qcvm, 0);
+  float x = qcvm_get_parm_float(qcvm, 1);
+  float y = qcvm_get_parm_float(qcvm, 2);
+  const char *recipe = qcvm_get_parm_string(qcvm, 3);
+
+  if (map < 0 || map >= (int)game->map_count) {
+    printf("[ERROR] Assertion G_Add_Neutral_Animal(map >= 0 || map < "
+           "game->map_count) "
+           "[map = %d, map_count = %d] should be "
+           "verified.\n",
+           map, game->map_count);
+    return;
+  }
+
+  map_t *the_map = &game->maps[map];
+
+  if (x < 0.0f || x >= the_map->w) {
+    printf("[ERROR] Assertion G_Add_Neutral_Animal(x >= 0 || x < "
+           "map->w) "
+           "[x = %d, map->w = %d] should be "
+           "verified.\n",
+           (unsigned)x, the_map->w);
+    return;
+  }
+
+  if (y < 0.0f || y >= the_map->h) {
+    printf("[ERROR] Assertion G_Add_Neutral_Animal(y >= 0 || y < "
+           "map->y) "
+           "[y = %d, map->h = %d] should be "
+           "verified.\n",
+           (unsigned)y, the_map->h);
+    return;
+  }
+
+  zpl_u64 key = zpl_fnv64(recipe, strlen(recipe));
+  animal_t *the_animal = G_Animals_get(&game->animal_bank, key);
+
+  if (!the_animal) {
+    printf("[ERROR] Assertion G_Add_Neutral_Animal(recipe exists) [recipe = "
+           "\"%s\"] "
+           "should be verified.\n",
+           recipe);
+    return;
+  }
+
+  struct Transform transform = {
+      .position = {x, y},
+      .scale = {1.0f, 1.0f},
+  };
+
+  struct Sprite sprite = {
+      .current = the_animal->east_tex,
+      .texture_east = the_animal->east_tex,
+      .texture_south = the_animal->south_tex,
+      .texture_north = the_animal->north_tex,
+  };
+
+  G_AddPawn(game, &transform, &sprite, AGENT_ANIMAL);
 }
 
 void G_Draw_Image_Relative(game_t *game, const char *path, float w, float h,
@@ -2309,8 +2424,8 @@ void G_AddFurniture(client_t *client, game_t *game, struct Transform *transform,
   VK_Add_Immovable(rend, entity, immovable);
 }
 
-void G_AddPawn(client_t *client, game_t *game, struct Transform *transform,
-               struct Sprite *sprite) {
+void G_AddPawn(game_t *game, struct Transform *transform,
+               struct Sprite *sprite, agent_type_t agent_type) {
   game->entity_count += 1;
   vk_rend_t *rend = game->rend;
   unsigned entity =
@@ -2327,17 +2442,9 @@ void G_AddPawn(client_t *client, game_t *game, struct Transform *transform,
 
   cpu_agent_t cpu_agent = {
       .state = AGENT_PATH_FINDING,
-      .speed = 0.2,
-      .target =
-          {
-#if CORRIDOR
-              [0] = 55.0f,
-              [1] = 35.0f,
-#else
-              [0] = 0.0f,
-              [1] = 0.0f,
-#endif
-          },
+      .type = agent_type,
+      .speed = 0.05,
+      .target = {2.0, 2.0},
   };
 
   game->cpu_agents[entity] = cpu_agent;
@@ -2349,7 +2456,7 @@ void G_AddPawn(client_t *client, game_t *game, struct Transform *transform,
 }
 
 character_t *G_GetCharacter(game_t *game, const char *family, wchar_t c) {
-  // TODO: we only compare the first letter, cause we only have two font family
+  // TODO: we only compare the first letter, cause we only have two font families
   // available, sorry for that
   if (family[0] == 'c') { // "console"
     return CL_Characters_get(&game->console_character_bank, c);

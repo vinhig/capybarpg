@@ -18,8 +18,10 @@ layout(location = 0) in vec3 o_color;
 layout(location = 1) in vec2 vtx_uv;
 layout(location = 2) flat in uvec4 o_albedo_id;
 
-layout(location = 3) flat in uint stack_count;
-layout(location = 4) flat in uint stack_textures[4];
+layout(location = 3) flat in uint draw_state;
+
+layout(location = 4) flat in uint stack_count;
+layout(location = 5) flat in uint stack_textures[4];
 
 // output write
 layout(location = 0) out vec4 o_albedo;
@@ -34,47 +36,51 @@ void main() {
   // uniform
 
   // Mixing the floor + walls
-  vec4 final_color = vec4(0.0);
-  if (o_albedo_id.yzw == uvec3(0.0)) {
-    vec4 color = texture(textures[nonuniformEXT(o_albedo_id.x)], vtx_uv);
-    if (color.a <= 0.2) {
-      color.a = 0.0;
+  if (draw_state == 0) {
+    vec4 final_color = vec4(0.0);
+    if (o_albedo_id.yzw == uvec3(0.0)) {
+      vec4 color = texture(textures[nonuniformEXT(o_albedo_id.x)], vtx_uv);
+      if (color.a <= 0.2) {
+        color.a = 0.0;
+      }
+      final_color = color;
+    } else {
+      vec4 color_1 = texture(textures[nonuniformEXT(o_albedo_id.x)], vtx_uv);
+      vec4 color_2 = texture(textures[nonuniformEXT(o_albedo_id.y)], vtx_uv);
+
+      vec4 outcolor = color_1;
+      outcolor = outcolor * (1.0 - color_2.a) + color_2;
+
+      final_color = outcolor;
     }
-    final_color = color;
+
+    vec4 stack_color = vec4(0.0);
+
+    vec2 offsets[3];
+    float scale = 1.9;
+    if (stack_count == 3) {
+      offsets = offsets_3;
+    } else if (stack_count == 2) {
+      scale = 1.5;
+      offsets = offsets_2;
+    } else if (stack_count == 1) {
+      scale = 1.2;
+      offsets = offsets_1;
+    }
+
+    for (int i = 0; i < stack_count; i++) {
+      vec2 wtf_uv = vtx_uv * scale + offsets[i];
+      wtf_uv.x = clamp(wtf_uv.x, 0.0, 1.0);
+      wtf_uv.y = clamp(wtf_uv.y, 0.0, 1.0);
+
+      vec4 this_stack = texture(textures[stack_textures[i]], wtf_uv);
+      stack_color = stack_color * (1.0 - this_stack.a) + this_stack;
+    }
+
+    o_albedo = final_color * (1.0 - stack_color.a) + stack_color;
   } else {
-    vec4 color_1 = texture(textures[nonuniformEXT(o_albedo_id.x)], vtx_uv);
-    vec4 color_2 = texture(textures[nonuniformEXT(o_albedo_id.y)], vtx_uv);
-
-    vec4 outcolor = color_1;
-    outcolor = outcolor * (1.0 - color_2.a) + color_2;
-
-    final_color = outcolor;
+    o_albedo = texture(textures[nonuniformEXT(o_albedo_id.x)], vtx_uv);
   }
-
-  vec4 stack_color = vec4(0.0);
-
-  vec2 offsets[3];
-  float scale = 1.9;
-  if (stack_count == 3) {
-    offsets = offsets_3;
-  } else if (stack_count == 2) {
-    scale = 1.5;
-    offsets = offsets_2;
-  } else if (stack_count == 1) {
-    scale = 1.2;
-    offsets = offsets_1;
-  }
-
-  for (int i = 0; i < stack_count; i++) {
-    vec2 wtf_uv = vtx_uv * scale + offsets[i];
-    wtf_uv.x = clamp(wtf_uv.x, 0.0, 1.0);
-    wtf_uv.y = clamp(wtf_uv.y, 0.0, 1.0);
-
-    vec4 this_stack = texture(textures[stack_textures[i]], wtf_uv);
-    stack_color = stack_color * (1.0 - this_stack.a) + this_stack;
-  }
-
-  o_albedo = final_color * (1.0 - stack_color.a) + stack_color;
 
   // o_albedo = vec4(stack_count);
 }

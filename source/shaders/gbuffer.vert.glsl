@@ -34,14 +34,17 @@ layout(location = 0) out vec3 o_color;
 layout(location = 1) out vec2 vtx_uv;
 layout(location = 2) flat out uvec4 o_albedo_id;
 
-layout(location = 3) flat out uint stack_count;
-layout(location = 4) flat out uint stack_textures[4];
+layout(location = 3) flat out uint draw_state;
+
+layout(location = 4) flat out uint stack_count;
+layout(location = 5) flat out uint stack_textures[4];
+
 
 layout(std430, set = 3, binding = 0) readonly buffer Visibles {
   uint visibles[];
 };
 
-layout(push_constant) uniform DrawState { uint draw_state; };
+layout(push_constant) uniform DrawState { uint uber_draw_state; };
 
 int wall_signature(int t, int b, int l, int r) {
   return t << 4 | b << 3 | l << 2 | r << 1;
@@ -100,7 +103,9 @@ int get_idx(int instance_x, int instance_y) {
 void main() {
   uint instance = visibles[gl_InstanceIndex];
 
-  if (draw_state == 0) {
+  draw_state = uber_draw_state;
+
+  if (uber_draw_state == 0) {
     // This is drawing a map TILE
     int instance_x = int(gl_InstanceIndex % global_ubo.map_width);
     int instance_y = int(gl_InstanceIndex / global_ubo.map_width);
@@ -121,7 +126,7 @@ void main() {
     stack_count = tiles[gl_InstanceIndex].stack_count;
     stack_textures = tiles[gl_InstanceIndex].stack_textures;
 
-  } else if (draw_state == 1) {
+  } else if (uber_draw_state == 1) {
     // This is drawing a PAWN/FURNITURE
     float flip = 1.0;
 

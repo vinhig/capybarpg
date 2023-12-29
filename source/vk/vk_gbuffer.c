@@ -408,6 +408,7 @@ void VK_DrawGBuffer(vk_rend_t *rend) {
   vkCmdPushConstants(cmd, rend->gbuffer->pipeline_layout,
                      VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(unsigned),
                      &draw_state);
+
   vkCmdDraw(cmd, 6, rend->ecs->entity_count, 0, 0);
 
   vkCmdEndRendering(cmd);

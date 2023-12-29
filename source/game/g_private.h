@@ -39,7 +39,7 @@ typedef struct cpu_agent_t {
     AGENT_MOVING,
     AGENT_NOTHING,
   } state;
-
+  agent_type_t type;
   cpu_path_t computed_path;
 } __attribute__((aligned(16))) cpu_agent_t;
 
@@ -58,7 +58,7 @@ typedef struct node_t node_t;
 typedef struct path_finding_job_t {
   unsigned agent;
   unsigned map;
-  game_t* game;
+  game_t *game;
 } path_finding_job_t;
 
 typedef struct item_text_job_t {
@@ -74,7 +74,7 @@ typedef struct font_job_t {
 
   FT_Face *face;
   FT_Library ft;
-  character_bank_t* character_bank;
+  character_bank_t *character_bank;
 
   game_t *game;
 } font_job_t;
@@ -88,7 +88,6 @@ typedef struct texture_job_t {
 
 typedef struct map_t {
   struct map *jps_maps[16];
-  atomic_int jps_idx;
   zpl_mutex mutex;
 
   unsigned w;
@@ -143,7 +142,7 @@ struct game_t {
   unsigned worker_count;
   zpl_jobs_system job_sys;
 
-  qcvm_t * qcvms[16];
+  qcvm_t *qcvms[16];
   atomic_int qcvm_idx;
 
   char *base;
@@ -172,7 +171,7 @@ struct game_t {
 
   character_bank_t console_character_bank;
   character_bank_t game_character_bank;
-  unsigned char* white_space;
+  unsigned char *white_space;
 
   zpl_mutex global_map_mutex;
   unsigned map_count;
@@ -196,6 +195,16 @@ struct game_t {
   // Hello
   vk_rend_t *rend;
   client_t *client;
+
+  // Thread's ID as given by the OS isn't necessarly an integer in [0-16) range
+  // So we keep a record of which os_id (that can be something
+  // like -176183616) corresponds to which local_id [0-16)
+  // The local_id is used to index data structures that can't
+  // be accessed by different threads (like qcvm_t or the jps map).
+  struct {
+    unsigned os_id;
+  } thread_ids[16];
+  atomic_int registered_thread_idx;
 };
 
 void G_TerrainInstall(qcvm_t *qcvm);

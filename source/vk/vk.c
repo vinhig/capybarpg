@@ -160,16 +160,16 @@ const unsigned vk_device_layer_count = 1;
 
 char vk_error[1024];
 
-#define VK_PUSH_ERROR(r)                                                       \
-  {                                                                            \
-    memcpy(vk_error, r, strlen(r));                                            \
-    return NULL;                                                               \
+#define VK_PUSH_ERROR(r)            \
+  {                                 \
+    memcpy(vk_error, r, strlen(r)); \
+    return NULL;                    \
   }
 
-#define VK_CHECK_R(r)                                                          \
-  if (r != VK_SUCCESS) {                                                       \
-    memcpy(vk_error, #r, strlen(#r));                                          \
-    return NULL;                                                               \
+#define VK_CHECK_R(r)                 \
+  if (r != VK_SUCCESS) {              \
+    memcpy(vk_error, #r, strlen(#r)); \
+    return NULL;                      \
   }
 
 bool VK_CheckDeviceFeatures(VkExtensionProperties *extensions,
@@ -736,12 +736,40 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
                         &rend->swapchain_render_semaphore[i]);
 
       vkCreateFence(rend->device, &fence_info, NULL, &rend->rend_fence[i]);
+
+      char name[256];
+      sprintf(&name[0], "Rend Fence[%d]", i);
+      VkDebugUtilsObjectNameInfoEXT rend_fence = {
+          .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+          .objectType = VK_OBJECT_TYPE_FENCE,
+          .objectHandle = (uint64_t)rend->rend_fence[i],
+          .pObjectName = &name[0],
+      };
+      rend->vkSetDebugUtilsObjectName(rend->device, &rend_fence);
+
       vkCreateFence(rend->device, &fence_info, NULL, &rend->logic_fence[i]);
+
+      sprintf(&name[0], "Logic Fence[%d]", i);
+      VkDebugUtilsObjectNameInfoEXT logic_fence = {
+          .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+          .objectType = VK_OBJECT_TYPE_FENCE,
+          .objectHandle = (uint64_t)rend->logic_fence[i],
+          .pObjectName = &name[0],
+      };
+      rend->vkSetDebugUtilsObjectName(rend->device, &logic_fence);
+
     }
     // The transfer queue is by default free to be used
     // So create the fence with a SIGNALED state
     fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
     vkCreateFence(rend->device, &fence_info, NULL, &rend->transfer_fence);
+    VkDebugUtilsObjectNameInfoEXT transfer_fence = {
+        .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+        .objectType = VK_OBJECT_TYPE_FENCE,
+        .objectHandle = (uint64_t)rend->transfer_fence,
+        .pObjectName = "Transfer Fence",
+    };
+    rend->vkSetDebugUtilsObjectName(rend->device, &transfer_fence);
   }
 
   // Create descriptor pool
@@ -991,7 +1019,7 @@ void VK_Draw(vk_rend_t *rend, game_state_t *game) {
 
   // Populate tmp, find minimum/maximum to put depth in correct range
   float min_depth = FLT_MAX;
-  float max_depth = FLT_MIN;
+  float max_depth = -FLT_MIN;
   for (unsigned i = 0; i < rend->ecs->entity_count; i++) {
     tmps[i].entity = i;
     tmps[i].depth =
