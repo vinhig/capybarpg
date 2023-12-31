@@ -104,7 +104,7 @@ typedef struct terrain_t {
   char *variant3_path;
 } terrain_t;
 
-typedef struct animal_t {
+typedef struct pawn_t {
   char *name;
 
   float scale;
@@ -118,7 +118,7 @@ typedef struct animal_t {
 
   unsigned east_tex;
   char *east_path;
-} animal_t;
+} pawn_t;
 
 typedef struct wall_t {
   char *name;

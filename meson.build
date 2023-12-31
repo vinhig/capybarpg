@@ -142,6 +142,7 @@ exe = executable('maidenless',
   'source/client/cl_console.c',
 
   'source/game/g_game.c',
+  'source/game/g_bindings.c',
   'source/game/g_data.c',
   'source/game/g_terrain.c',
 

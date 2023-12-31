@@ -14,5 +14,9 @@ ZPL_TABLE_DEFINE(texture_bank_t, G_ImmediateTextures_, texture_t)
 ZPL_TABLE_DECLARE(extern, terrain_bank_t, G_Terrains_, terrain_t)
 ZPL_TABLE_DEFINE(terrain_bank_t, G_Terrains_, terrain_t)
 
-ZPL_TABLE_DECLARE(extern, animal_bank_t, G_Animals_, animal_t)
-ZPL_TABLE_DEFINE(animal_bank_t, G_Animals_, animal_t)
+ZPL_TABLE_DECLARE(extern, pawn_bank_t, G_Pawns_, pawn_t)
+ZPL_TABLE_DEFINE(pawn_bank_t, G_Pawns_, pawn_t)
+
+ZPL_TABLE_DECLARE(extern, inventory_t, G_Inventory_, float)
+ZPL_TABLE_DEFINE(inventory_t, G_Inventory_, float)
+

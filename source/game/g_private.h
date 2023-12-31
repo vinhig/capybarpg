@@ -23,7 +23,8 @@ ZPL_TABLE_DECLARE(extern, texture_bank_t, G_ImmediateTextures_, texture_t)
 ZPL_TABLE_DECLARE(extern, wall_bank_t, G_Walls_, wall_t)
 ZPL_TABLE_DECLARE(extern, terrain_bank_t, G_Terrains_, terrain_t)
 ZPL_TABLE_DECLARE(extern, character_bank_t, CL_Characters_, character_t)
-ZPL_TABLE_DECLARE(extern, animal_bank_t, G_Animals_, animal_t)
+ZPL_TABLE_DECLARE(extern, pawn_bank_t, G_Pawns_, pawn_t)
+ZPL_TABLE_DECLARE(extern, inventory_t, G_Inventory_, float)
 
 typedef struct cpu_path_t {
   vec2 *points;
@@ -35,12 +36,16 @@ typedef struct cpu_agent_t {
   vec2 target;
   float speed;
   enum agent_state_e {
+    AGENT_NOTHING,
     AGENT_PATH_FINDING,
     AGENT_MOVING,
-    AGENT_NOTHING,
+    AGENT_DRAFTED,
   } state;
   agent_type_t type;
   cpu_path_t computed_path;
+
+  inventory_t inventory;
+  bool inventory_initialized;
 } __attribute__((aligned(16))) cpu_agent_t;
 
 typedef struct cpu_tile_t {
@@ -54,6 +59,12 @@ typedef struct cpu_tile_t {
 } cpu_tile_t;
 
 typedef struct node_t node_t;
+
+typedef struct think_job_t {
+  unsigned agent;
+
+  game_t *game;
+} think_job_t;
 
 typedef struct path_finding_job_t {
   unsigned agent;
@@ -102,6 +113,7 @@ typedef enum listener_type_t {
   G_SCENE_END,
   G_SCENE_UPDATE,
   G_CAMERA_UPDATE,
+  G_THINK_UPDATE,
   G_LISTENER_TYPE_COUNT,
 } listener_type_t;
 
@@ -124,6 +136,9 @@ typedef struct scene_t {
   listener_t camera_update_listeners[16];
   unsigned camera_update_listener_count;
 
+  listener_t agent_think_listeners[16];
+  unsigned agent_think_listener_count;
+
   zpl_mutex scene_mutex;
   int current_map;
 } scene_t;
@@ -143,7 +158,6 @@ struct game_t {
   zpl_jobs_system job_sys;
 
   qcvm_t *qcvms[16];
-  atomic_int qcvm_idx;
 
   char *base;
 
@@ -181,7 +195,7 @@ struct game_t {
   wall_bank_t wall_bank;
   texture_bank_t immediate_texture_bank;
   terrain_bank_t terrain_bank;
-  animal_bank_t animal_bank;
+  pawn_bank_t pawn_bank;
 
   // Game state, reset each frame
   // The renderer use this to draw the frame
@@ -205,8 +219,10 @@ struct game_t {
     unsigned os_id;
   } thread_ids[16];
   atomic_int registered_thread_idx;
+  zpl_mutex thread_ids_mutex;
 };
 
+void G_CommonInstall(qcvm_t *qcvm);
 void G_TerrainInstall(qcvm_t *qcvm);
 void G_Add_Wall(game_t *game, int map, int x, int y, float health,
                 wall_t *wall_recipe);

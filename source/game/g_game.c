@@ -1,11 +1,14 @@
 #include "game/g_game.h"
 #include "cglm/mat4.h"
+#include "cglm/util.h"
 #include "freetype/freetype.h"
 #include "intlist.h"
 #include "qcvm.h"
 #include "vk/vk_vulkan.h"
 #include <client/cl_input.h>
+#include <float.h>
 #include <game/g_private.h>
+#include <math.h>
 #include <stbi_image.h>
 
 #include <jps.h>
@@ -59,9 +62,16 @@ game_t *G_CreateGame(client_t *client, char *base) {
   zpl_jobs_init_with_limit(&game->job_sys, zpl_heap_allocator(),
                            game->worker_count, 10000);
 
+  zpl_mutex_init(&game->thread_ids_mutex);
+  zpl_mutex_lock(&game->thread_ids_mutex);
+
   for (unsigned i = 0; i < game->worker_count; i++) {
     zpl_jobs_enqueue(&game->job_sys, G_WorkerRegisterThread, game);
   }
+
+  zpl_jobs_process(&game->job_sys);
+
+  zpl_mutex_unlock(&game->thread_ids_mutex);
 
   zpl_affinity_destroy(&af);
 
@@ -72,8 +82,9 @@ game_t *G_CreateGame(client_t *client, char *base) {
   G_ImmediateTextures_init(&game->immediate_texture_bank, zpl_heap_allocator());
   G_Walls_init(&game->wall_bank, zpl_heap_allocator());
   G_Terrains_init(&game->terrain_bank, zpl_heap_allocator());
-  G_Animals_init(&game->animal_bank, zpl_heap_allocator());
+  G_Pawns_init(&game->pawn_bank, zpl_heap_allocator());
 
+  // Two freetype library because font loading may happen on different threads
   if (FT_Init_FreeType(&game->console_ft)) {
     printf("[ERROR] Couldn't init freetype for the game.\n");
     return false;
@@ -194,13 +205,17 @@ void G_WorkerRegisterThread(void *data) {
 
   for (unsigned i = 0; i < 16; i++) {
     if (game->thread_ids[i].os_id == os_id) {
-      printf("Already registered thread %d\n", i);
+      printf("Already registered thread %d. Let's pray together our Lord and Savior.\n", i);
+      abort();
       return;
     }
   }
 
   int my_idx = atomic_fetch_add(&game->registered_thread_idx, 1);
   game->thread_ids[my_idx].os_id = os_id;
+
+  zpl_mutex_lock(&game->thread_ids_mutex);
+  zpl_mutex_unlock(&game->thread_ids_mutex);
 }
 
 unsigned G_GetThreadId(game_t *game, unsigned os_id) {
@@ -212,7 +227,27 @@ unsigned G_GetThreadId(game_t *game, unsigned os_id) {
 
   printf("G_GetThreadId was called from an unregistred thread. Something went super wrong...\n");
   printf("Let's abort and pray together.\n");
-  exit(-1);
+  abort();
+}
+
+void G_WorkerThinkAgent(void *data) {
+  think_job_t *job = data;
+  game_t *game = job->game;
+  unsigned agent = job->agent;
+
+  unsigned thread_id = G_GetThreadId(game, zpl_thread_current_id());
+
+  qcvm_t *qcvm = game->qcvms[thread_id];
+
+  for (unsigned t = 0; t < game->current_scene->agent_think_listener_count; t++) {
+    qcvm_set_parm_int(qcvm, 0, game->current_scene->current_map);
+    qcvm_set_parm_int(qcvm, 1, agent);
+    qcvm_set_parm_float(qcvm, 2, game->cpu_agents[agent].type);
+    qcvm_set_parm_vector(qcvm, 3, game->transforms[agent].position[0], game->transforms[agent].position[1], 0.0f);
+    qcvm_set_parm_float(qcvm, 4, game->cpu_agents[agent].state);
+
+    qcvm_run(qcvm, game->current_scene->agent_think_listeners[t].qcvm_func);
+  }
 }
 
 void G_WorkerUpdateAgents(void *data) {
@@ -239,8 +274,17 @@ void G_WorkerUpdateAgents(void *data) {
 
     unsigned size = il_size(list);
 
+    if (size == 0) {
+      game->cpu_agents[agent].state = AGENT_NOTHING;
+      il_destroy(list);
+      return;
+    }
+
     game->cpu_agents[agent].computed_path.count = size;
     game->cpu_agents[agent].computed_path.current = 0;
+    if (game->cpu_agents[agent].computed_path.points) {
+      free(game->cpu_agents[agent].computed_path.points);
+    }
     game->cpu_agents[agent].computed_path.points = calloc(size, sizeof(vec2));
     for (unsigned p = 0; p < size; p++) {
       int x = il_get(list, (size - p - 1), 0);
@@ -350,18 +394,18 @@ game_state_t *G_TickGame(client_t *client, game_t *game) {
     }
 
     if (agent_count != 0) {
-      path_finding_job_t *jobs = calloc(agent_count, sizeof(path_finding_job_t));
+      think_job_t *think_jobs = calloc(agent_count, sizeof(think_job_t));
       unsigned agent_idx = 0;
+
       for (unsigned i = 0; i < game->entity_count; i++) {
         unsigned signature = game->entities[i];
 
         if (signature & agent_signature) {
-          jobs[agent_idx] = (path_finding_job_t){
-              .agent = i,
+          think_jobs[i] = (think_job_t){
+              .agent = agent_idx,
               .game = game,
-              .map = game->current_scene->current_map,
           };
-          zpl_jobs_enqueue(&game->job_sys, G_WorkerUpdateAgents, &jobs[agent_idx]);
+          zpl_jobs_enqueue(&game->job_sys, G_WorkerThinkAgent, &think_jobs[agent_idx]);
           agent_idx++;
         }
       }
@@ -370,7 +414,29 @@ game_state_t *G_TickGame(client_t *client, game_t *game) {
         zpl_jobs_process(&game->job_sys);
       };
 
-      free(jobs);
+      free(think_jobs);
+
+      path_finding_job_t *path_finding_jobs = calloc(agent_count, sizeof(path_finding_job_t));
+      agent_idx = 0;
+      for (unsigned i = 0; i < game->entity_count; i++) {
+        unsigned signature = game->entities[i];
+
+        if (signature & agent_signature) {
+          path_finding_jobs[i] = (path_finding_job_t){
+              .agent = i,
+              .game = game,
+              .map = game->current_scene->current_map,
+          };
+          zpl_jobs_enqueue(&game->job_sys, G_WorkerUpdateAgents, &path_finding_jobs[agent_idx]);
+          agent_idx++;
+        }
+      }
+
+      while (!zpl_jobs_done(&game->job_sys)) {
+        zpl_jobs_process(&game->job_sys);
+      };
+
+      free(path_finding_jobs);
     }
 
     if (game->current_scene->current_map != -1) {
@@ -575,14 +641,14 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
   // * furnitures
   // * items
   // * materials
-  // * animals
+  // * pawns
   // We extract them here in a specific order, cause there are some dependencies
   // (furnitures and walls are built with materials for example)
   zpl_json_object *terrains = zpl_adt_find(&recipes, "terrains", false);
   zpl_json_object *materials = zpl_adt_find(&recipes, "materials", false);
   zpl_json_object *walls = zpl_adt_find(&recipes, "walls", false);
   zpl_json_object *furnitures = zpl_adt_find(&recipes, "furnitures", false);
-  zpl_json_object *animals = zpl_adt_find(&recipes, "animals", false);
+  zpl_json_object *pawns = zpl_adt_find(&recipes, "pawns", false);
 
   zpl_unused(furnitures);
 
@@ -980,28 +1046,28 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
     printf("[DEBUG] No 'walls' specified in `%s`.\n", path);
   }
 
-  if (animals && animals->type == ZPL_ADT_TYPE_ARRAY) {
-    unsigned size = zpl_array_count(animals->nodes);
+  if (pawns && pawns->type == ZPL_ADT_TYPE_ARRAY) {
+    unsigned size = zpl_array_count(pawns->nodes);
 
     for (unsigned i = 0; i < size; i++) {
-      zpl_adt_node *element = &animals->nodes[i];
+      zpl_adt_node *element = &pawns->nodes[i];
       zpl_adt_node *id_node = zpl_adt_find(element, "id", false);
 
       if (!id_node || id_node->type != ZPL_ADT_TYPE_STRING) {
-        printf("[WARNING] The element %d in the 'animals' list doesn't have "
+        printf("[WARNING] The element %d in the 'pawns' list doesn't have "
                "an ID (of type string).\n",
                i);
         continue;
       } else {
         zpl_u64 key = zpl_fnv64(id_node->string, strlen(id_node->string));
         // Does the bank contains this element? If not create an empty one.
-        animal_t *animal = G_Animals_get(&game->animal_bank, key);
+        pawn_t *pawn = G_Pawns_get(&game->pawn_bank, key);
 
-        if (!animal) {
-          G_Animals_set(&game->animal_bank, key, (animal_t){.revision = 1});
-          animal = G_Animals_get(&game->animal_bank, key);
+        if (!pawn) {
+          G_Pawns_set(&game->pawn_bank, key, (pawn_t){.revision = 1});
+          pawn = G_Pawns_get(&game->pawn_bank, key);
         } else {
-          animal->revision += 1;
+          pawn->revision += 1;
         }
 
         zpl_adt_node *name_node = zpl_adt_find(element, "name", false);
@@ -1013,10 +1079,10 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
 
         // Some field may be NULL if not present, we don't care
         if (name_node && name_node->type == ZPL_ADT_TYPE_STRING) {
-          if (animal->name) {
-            free(animal->name);
+          if (pawn->name) {
+            free(pawn->name);
           }
-          animal->name =
+          pawn->name =
               memcpy(malloc(strlen(name_node->string) + 1), name_node->string,
                      strlen(name_node->string) + 1);
         }
@@ -1027,26 +1093,26 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
           east_node = zpl_adt_find(sprites_node, "east", false);
 
           if (north_node && north_node->type == ZPL_ADT_TYPE_STRING) {
-            if (animal->north_path) {
-              free(animal->north_path);
+            if (pawn->north_path) {
+              free(pawn->north_path);
             }
-            animal->north_path = memcpy(
+            pawn->north_path = memcpy(
                 malloc(strlen(north_node->string) + 1),
                 north_node->string, strlen(north_node->string) + 1);
           }
           if (south_node && south_node->type == ZPL_ADT_TYPE_STRING) {
-            if (animal->south_path) {
-              free(animal->south_path);
+            if (pawn->south_path) {
+              free(pawn->south_path);
             }
-            animal->south_path = memcpy(
+            pawn->south_path = memcpy(
                 malloc(strlen(south_node->string) + 1),
                 south_node->string, strlen(south_node->string) + 1);
           }
           if (east_node && east_node->type == ZPL_ADT_TYPE_STRING) {
-            if (animal->east_path) {
-              free(animal->east_path);
+            if (pawn->east_path) {
+              free(pawn->east_path);
             }
-            animal->east_path = memcpy(
+            pawn->east_path = memcpy(
                 malloc(strlen(east_node->string) + 1),
                 east_node->string, strlen(east_node->string) + 1);
           }
@@ -1069,8 +1135,8 @@ void G_Add_Recipes_QC(qcvm_t *qcvm) {
   qcvm_return_int(qcvm, (int)G_Add_Recipes(game, path, required));
 }
 
-unsigned G_Add_Items(game_t *game, unsigned map, unsigned x, unsigned y,
-                     material_t *the_item, unsigned amount) {
+unsigned G_Item_AddAmount(game_t *game, unsigned map, unsigned x, unsigned y,
+                          material_t *the_item, unsigned amount) {
   map_t *the_map = &game->maps[map];
 
   unsigned idx = y * the_map->w + x;
@@ -1116,7 +1182,7 @@ unsigned G_Add_Items(game_t *game, unsigned map, unsigned x, unsigned y,
   return remaining;
 }
 
-void G_Add_Items_QC(qcvm_t *qcvm) {
+void G_Item_AddAmount_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
 
   int map = qcvm_get_parm_int(qcvm, 0);
@@ -1127,7 +1193,7 @@ void G_Add_Items_QC(qcvm_t *qcvm) {
 
   if (map < 0 || map >= (int)game->map_count) {
     printf(
-        "[ERROR] Assertion G_Add_Items_QC(map >= 0 || map < game->map_count) "
+        "[ERROR] Assertion G_Item_AddAmount_QC(map >= 0 || map < game->map_count) "
         "[map = %d, map_count = %d] should be "
         "verified.\n",
         map, game->map_count);
@@ -1137,7 +1203,7 @@ void G_Add_Items_QC(qcvm_t *qcvm) {
   map_t *the_map = &game->maps[map];
 
   if (x < 0.0f || x >= the_map->w) {
-    printf("[ERROR] Assertion G_Add_Items_QC(x >= 0 || x < "
+    printf("[ERROR] Assertion G_Item_AddAmount_QC(x >= 0 || x < "
            "map->w) "
            "[x = %d, map->w = %d] should be "
            "verified.\n",
@@ -1146,7 +1212,7 @@ void G_Add_Items_QC(qcvm_t *qcvm) {
   }
 
   if (y < 0.0f || y >= the_map->h) {
-    printf("[ERROR] Assertion G_Add_Items_QC(y >= 0 || y < "
+    printf("[ERROR] Assertion G_Item_AddAmount_QC(y >= 0 || y < "
            "map->h) "
            "[y = %d, map->h = %d] should be "
            "verified.\n",
@@ -1158,36 +1224,138 @@ void G_Add_Items_QC(qcvm_t *qcvm) {
   material_t *the_item = G_Materials_get(&game->material_bank, key);
 
   if (!the_item) {
-    printf("[ERROR] Assertion G_Add_Items_QC(recipe exists) [recipe = \"%s\"] "
+    printf("[ERROR] Assertion G_Item_AddAmount_QC(recipe exists) [recipe = \"%s\"] "
            "should be verified.\n",
            recipe);
     return;
   }
 
   if (amount <= 0.0f) {
-    printf("[ERROR] Assertion G_Add_Items_QC(amount is positive) [amount = "
+    printf("[ERROR] Assertion G_Item_AddAmount_QC(amount is positive) [amount = "
            "%.03f] "
            "should be verified.\n",
            amount);
     return;
   }
 
-  float placed = G_Add_Items(game, map, x, y, the_item, (unsigned)amount);
+  float placed = G_Item_AddAmount(game, map, x, y, the_item, (unsigned)amount);
 
   qcvm_return_float(qcvm, placed);
 }
 
-bool G_Find_Nearest_Items(unsigned map, unsigned x, unsigned y,
-                          const char *recipe, unsigned start_search) {
-  return false;
+void G_UpdateTile(game_t *game, map_t *map, unsigned idx) {
+  cpu_tile_t *cpu_tile = &map->cpu_tiles[idx];
+  struct Tile *gpu_tile = &map->gpu_tiles[idx];
+
+  unsigned actual_stack_count = 0;
+  for (unsigned i = 0; i < 3; i++) {
+    if (cpu_tile->stack_amounts[i] == 0) {
+      cpu_tile->stack_recipes[i] = NULL;
+    } else {
+      actual_stack_count++;
+    }
+  }
+
+  cpu_tile->stack_count = actual_stack_count;
+
+  unsigned current_stack = 0;
+  for (unsigned i = 0; i < 3; i++) {
+    if (cpu_tile->stack_recipes[i]) {
+      material_t *tmp_mat = cpu_tile->stack_recipes[i];
+      unsigned tmp_amount = cpu_tile->stack_amounts[i];
+      cpu_tile->stack_recipes[i] = NULL;
+      cpu_tile->stack_amounts[i] = 0;
+      cpu_tile->stack_recipes[current_stack] = tmp_mat;
+      cpu_tile->stack_amounts[current_stack] = tmp_amount;
+      current_stack++;
+    }
+  }
+
+  gpu_tile->stack_count = actual_stack_count;
+  gpu_tile->stack_textures[0] = (cpu_tile->stack_recipes[0] ? cpu_tile->stack_recipes[0]->full_stack_tex : 0);
+  gpu_tile->stack_textures[1] = (cpu_tile->stack_recipes[1] ? cpu_tile->stack_recipes[1]->full_stack_tex : 0);
+  gpu_tile->stack_textures[2] = (cpu_tile->stack_recipes[2] ? cpu_tile->stack_recipes[2]->full_stack_tex : 0);
 }
 
-void G_Find_Nearest_Items_QC(qcvm_t *qcvm) {
-  printf("todo G_Find_Nearest_Items_QC\n");
-  exit(-1);
+void G_Item_RemoveAmount_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+
+  int map = qcvm_get_parm_int(qcvm, 0);
+  float x = qcvm_get_parm_float(qcvm, 1);
+  float y = qcvm_get_parm_float(qcvm, 2);
+  const char *recipe = qcvm_get_parm_string(qcvm, 3);
+  float amount = qcvm_get_parm_float(qcvm, 4);
+
+  if (map < 0 || map >= (int)game->map_count) {
+    printf(
+        "[ERROR] Assertion G_Item_RemoveAmount_QC(map >= 0 || map < game->map_count) "
+        "[map = %d, map_count = %d] should be "
+        "verified.\n",
+        map, game->map_count);
+    return;
+  }
+
+  map_t *the_map = &game->maps[map];
+
+  if (x < 0.0f || x >= the_map->w) {
+    printf("[ERROR] Assertion G_Item_RemoveAmount_QC(x >= 0 || x < "
+           "map->w) "
+           "[x = %d, map->w = %d] should be "
+           "verified.\n",
+           (unsigned)x, the_map->w);
+    return;
+  }
+
+  if (y < 0.0f || y >= the_map->h) {
+    printf("[ERROR] Assertion G_Item_RemoveAmount_QC(y >= 0 || y < "
+           "map->h) "
+           "[y = %d, map->h = %d] should be "
+           "verified.\n",
+           (unsigned)x, the_map->h);
+    return;
+  }
+
+  zpl_u64 key = zpl_fnv64(recipe, strlen(recipe));
+  material_t *the_item = G_Materials_get(&game->material_bank, key);
+
+  if (!the_item) {
+    printf("[ERROR] Assertion G_Item_RemoveAmount_QC(recipe exists) [recipe = \"%s\"] "
+           "should be verified.\n",
+           recipe);
+    return;
+  }
+
+  if (amount <= 0.0f) {
+    printf("[ERROR] Assertion G_Item_RemoveAmount_QC(amount is positive) [amount = "
+           "%.03f] "
+           "should be verified.\n",
+           amount);
+    return;
+  }
+
+  unsigned idx = y * the_map->w + x;
+
+  cpu_tile_t *the_tile = &the_map->cpu_tiles[idx];
+
+  for (unsigned i = 0; i < 3; i++) {
+    if (!the_tile->stack_recipes[i]) {
+      continue;
+    }
+    if (the_tile->stack_recipes[i]->key == the_item->key) {
+      if (the_tile->stack_amounts[i] >= amount) {
+        the_tile->stack_amounts[i] -= amount;
+        break;
+      } else {
+        amount -= the_tile->stack_amounts[i];
+        the_tile->stack_amounts[i] = 0.0f;
+      }
+    }
+  }
+
+  G_UpdateTile(game, the_map, idx);
 }
 
-void G_Add_Neutral_Animal_QC(qcvm_t *qcvm) {
+void G_Item_GetAmount_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
 
   int map = qcvm_get_parm_int(qcvm, 0);
@@ -1196,7 +1364,94 @@ void G_Add_Neutral_Animal_QC(qcvm_t *qcvm) {
   const char *recipe = qcvm_get_parm_string(qcvm, 3);
 
   if (map < 0 || map >= (int)game->map_count) {
-    printf("[ERROR] Assertion G_Add_Neutral_Animal(map >= 0 || map < "
+    printf(
+        "[ERROR] Assertion G_Item_GetAmount_QC(map >= 0 || map < game->map_count) "
+        "[map = %d, map_count = %d] should be "
+        "verified.\n",
+        map, game->map_count);
+    return;
+  }
+
+  map_t *the_map = &game->maps[map];
+
+  if (x < 0.0f || x >= the_map->w) {
+    printf("[ERROR] Assertion G_Item_GetAmount_QC(x >= 0 || x < "
+           "map->w) "
+           "[x = %d, map->w = %d] should be "
+           "verified.\n",
+           (unsigned)x, the_map->w);
+    return;
+  }
+
+  if (y < 0.0f || y >= the_map->h) {
+    printf("[ERROR] Assertion G_Item_GetAmount_QC(y >= 0 || y < "
+           "map->h) "
+           "[y = %d, map->h = %d] should be "
+           "verified.\n",
+           (unsigned)x, the_map->h);
+    return;
+  }
+
+  zpl_u64 key = zpl_fnv64(recipe, strlen(recipe));
+  material_t *the_item = G_Materials_get(&game->material_bank, key);
+
+  if (!the_item) {
+    printf("[ERROR] Assertion G_Item_GetAmount_QC(recipe exists) [recipe = \"%s\"] "
+           "should be verified.\n",
+           recipe);
+    return;
+  }
+
+  unsigned idx = y * the_map->w;
+
+  cpu_tile_t *the_tile = &the_map->cpu_tiles[idx];
+
+  for (unsigned i = 0; i < 3; i++) {
+    if (!the_tile->stack_recipes[i]) {
+      continue;
+    }
+    if (the_tile->stack_recipes[i]->key == the_item->key) {
+      qcvm_return_float(qcvm, the_tile->stack_amounts[i]);
+      break;
+    }
+  }
+
+  printf("no stuff on this tile mate %s\n", recipe);
+  qcvm_return_float(qcvm, 0.0f);
+}
+
+bool G_Item_FindNearest(unsigned map, unsigned x, unsigned y,
+                        const char *recipe, unsigned start_search) {
+  return false;
+}
+
+int G_SortFoundStack(const void *a, const void *b) {
+  typedef struct found_stack_t {
+    float distance;
+    vec2 pos;
+    float amount;
+  } found_stack_t;
+
+  const found_stack_t *tmp_a = a;
+  const found_stack_t *tmp_b = b;
+
+  if (tmp_a->distance > tmp_b->distance) {
+    return 1;
+  }
+  return -1;
+}
+
+void G_Item_FindNearest_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+
+  int map = qcvm_get_parm_int(qcvm, 0);
+  float x = qcvm_get_parm_float(qcvm, 1);
+  float y = qcvm_get_parm_float(qcvm, 2);
+  const char *recipe = qcvm_get_parm_string(qcvm, 3);
+  int start_search = (int)qcvm_get_parm_float(qcvm, 4);
+
+  if (map < 0 || map >= (int)game->map_count) {
+    printf("[ERROR] Assertion G_Item_FindNearest_QC(map >= 0 || map < "
            "game->map_count) "
            "[map = %d, map_count = %d] should be "
            "verified.\n",
@@ -1207,7 +1462,7 @@ void G_Add_Neutral_Animal_QC(qcvm_t *qcvm) {
   map_t *the_map = &game->maps[map];
 
   if (x < 0.0f || x >= the_map->w) {
-    printf("[ERROR] Assertion G_Add_Neutral_Animal(x >= 0 || x < "
+    printf("[ERROR] Assertion G_Item_FindNearest_QC(x >= 0 || x < "
            "map->w) "
            "[x = %d, map->w = %d] should be "
            "verified.\n",
@@ -1216,7 +1471,7 @@ void G_Add_Neutral_Animal_QC(qcvm_t *qcvm) {
   }
 
   if (y < 0.0f || y >= the_map->h) {
-    printf("[ERROR] Assertion G_Add_Neutral_Animal(y >= 0 || y < "
+    printf("[ERROR] Assertion G_Item_FindNearest_QC(y >= 0 || y < "
            "map->y) "
            "[y = %d, map->h = %d] should be "
            "verified.\n",
@@ -1225,10 +1480,99 @@ void G_Add_Neutral_Animal_QC(qcvm_t *qcvm) {
   }
 
   zpl_u64 key = zpl_fnv64(recipe, strlen(recipe));
-  animal_t *the_animal = G_Animals_get(&game->animal_bank, key);
+  material_t *the_material = G_Materials_get(&game->material_bank, key);
 
-  if (!the_animal) {
-    printf("[ERROR] Assertion G_Add_Neutral_Animal(recipe exists) [recipe = "
+  if (!the_material) {
+    printf("[ERROR] Assertion G_Item_FindNearest_QC(recipe exists) [recipe = "
+           "\"%s\"] "
+           "should be verified.\n",
+           recipe);
+    return;
+  }
+
+  // TODO: this part needs a major rework, but it's unlikely that
+  // a player can have more than 64 stacks of the same material
+  typedef struct found_stack_t {
+    float distance;
+    vec2 pos;
+    float amount;
+  } found_stack_t;
+  found_stack_t found_stacks[64];
+  unsigned found_stack_count = 0;
+
+  for (unsigned xx = 0; xx < the_map->w; xx++) {
+    for (unsigned yy = 0; yy < the_map->h; yy++) {
+      unsigned idx = yy * the_map->w + xx;
+      for (unsigned ii = 0; ii < 3; ii++) {
+        if (!the_map->cpu_tiles[idx].stack_recipes[ii]) {
+          continue;
+        }
+        if (the_map->cpu_tiles[idx].stack_recipes[ii]->key == the_material->key) {
+          float distance = sqrtf(
+              ((float)xx - x) * ((float)xx - x) + ((float)yy - y) * ((float)yy - y));
+
+          found_stacks[found_stack_count].amount = the_map->cpu_tiles[idx].stack_amounts[ii];
+          found_stacks[found_stack_count].distance = distance;
+          found_stacks[found_stack_count].pos[0] = xx;
+          found_stacks[found_stack_count].pos[1] = yy;
+
+          found_stack_count++;
+        }
+      }
+    }
+  }
+
+  qsort(&found_stacks, found_stack_count, sizeof(found_stack_t), G_SortFoundStack);
+
+  if (found_stack_count == 0) {
+    qcvm_return_vector(qcvm, 0.0f, 0.0f, -1.0f);
+  } else {
+    qcvm_return_vector(qcvm, found_stacks[start_search].pos[0], found_stacks[start_search].pos[1], found_stacks[start_search].amount);
+  }
+}
+
+void G_NeutralAnimal_Add_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+
+  int map = qcvm_get_parm_int(qcvm, 0);
+  float x = qcvm_get_parm_float(qcvm, 1);
+  float y = qcvm_get_parm_float(qcvm, 2);
+  const char *recipe = qcvm_get_parm_string(qcvm, 3);
+
+  if (map < 0 || map >= (int)game->map_count) {
+    printf("[ERROR] Assertion G_NeutralAnimal_Add(map >= 0 || map < "
+           "game->map_count) "
+           "[map = %d, map_count = %d] should be "
+           "verified.\n",
+           map, game->map_count);
+    return;
+  }
+
+  map_t *the_map = &game->maps[map];
+
+  if (x < 0.0f || x >= the_map->w) {
+    printf("[ERROR] Assertion G_NeutralAnimal_Add(x >= 0 || x < "
+           "map->w) "
+           "[x = %d, map->w = %d] should be "
+           "verified.\n",
+           (unsigned)x, the_map->w);
+    return;
+  }
+
+  if (y < 0.0f || y >= the_map->h) {
+    printf("[ERROR] Assertion G_NeutralAnimal_Add(y >= 0 || y < "
+           "map->y) "
+           "[y = %d, map->h = %d] should be "
+           "verified.\n",
+           (unsigned)y, the_map->h);
+    return;
+  }
+
+  zpl_u64 key = zpl_fnv64(recipe, strlen(recipe));
+  pawn_t *the_pawn = G_Pawns_get(&game->pawn_bank, key);
+
+  if (!the_pawn) {
+    printf("[ERROR] Assertion G_NeutralAnimal_Add(recipe exists) [recipe = "
            "\"%s\"] "
            "should be verified.\n",
            recipe);
@@ -1241,13 +1585,77 @@ void G_Add_Neutral_Animal_QC(qcvm_t *qcvm) {
   };
 
   struct Sprite sprite = {
-      .current = the_animal->east_tex,
-      .texture_east = the_animal->east_tex,
-      .texture_south = the_animal->south_tex,
-      .texture_north = the_animal->north_tex,
+      .current = the_pawn->east_tex,
+      .texture_east = the_pawn->east_tex,
+      .texture_south = the_pawn->south_tex,
+      .texture_north = the_pawn->north_tex,
   };
 
   G_AddPawn(game, &transform, &sprite, AGENT_ANIMAL);
+}
+
+void G_Colonist_Add_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+
+  int map = qcvm_get_parm_int(qcvm, 0);
+  float x = qcvm_get_parm_float(qcvm, 1);
+  float y = qcvm_get_parm_float(qcvm, 2);
+  int faction = qcvm_get_parm_int(qcvm, 3);
+  const char *recipe = qcvm_get_parm_string(qcvm, 4);
+
+  if (map < 0 || map >= (int)game->map_count) {
+    printf("[ERROR] Assertion G_Colonist_Add_QC(map >= 0 || map < "
+           "game->map_count) "
+           "[map = %d, map_count = %d] should be "
+           "verified.\n",
+           map, game->map_count);
+    return;
+  }
+
+  map_t *the_map = &game->maps[map];
+
+  if (x < 0.0f || x >= the_map->w) {
+    printf("[ERROR] Assertion G_Colonist_Add_QC(x >= 0 || x < "
+           "map->w) "
+           "[x = %d, map->w = %d] should be "
+           "verified.\n",
+           (unsigned)x, the_map->w);
+    return;
+  }
+
+  if (y < 0.0f || y >= the_map->h) {
+    printf("[ERROR] Assertion G_Colonist_Add_QC(y >= 0 || y < "
+           "map->y) "
+           "[y = %d, map->h = %d] should be "
+           "verified.\n",
+           (unsigned)y, the_map->h);
+    return;
+  }
+
+  zpl_u64 key = zpl_fnv64(recipe, strlen(recipe));
+  pawn_t *the_pawn = G_Pawns_get(&game->pawn_bank, key);
+
+  if (!the_pawn) {
+    printf("[ERROR] Assertion G_Colonist_Add_QC(recipe exists) [recipe = "
+           "\"%s\"] "
+           "should be verified.\n",
+           recipe);
+    return;
+  }
+
+  struct Transform transform = {
+      .position = {x, y},
+      .scale = {1.0f, 1.0f},
+  };
+
+  struct Sprite sprite = {
+      .current = the_pawn->east_tex,
+      .texture_east = the_pawn->east_tex,
+      .texture_south = the_pawn->south_tex,
+      .texture_north = the_pawn->north_tex,
+  };
+
+  G_AddPawn(game, &transform, &sprite, faction);
 }
 
 void G_Draw_Image_Relative(game_t *game, const char *path, float w, float h,
@@ -1289,6 +1697,18 @@ void G_Draw_Image_Relative(game_t *game, const char *path, float w, float h,
 
     game->state.draw_count++;
   }
+}
+
+void G_Entity_Goto_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+  int entity = qcvm_get_parm_int(qcvm, 0);
+
+  float x = qcvm_get_parm_float(qcvm, 1);
+  float y = qcvm_get_parm_float(qcvm, 2);
+
+  game->cpu_agents[entity].state = AGENT_PATH_FINDING;
+  game->cpu_agents[entity].target[0] = roundf(x);
+  game->cpu_agents[entity].target[1] = roundf(y);
 }
 
 void G_Draw_Image_Relative_QC(qcvm_t *qcvm) {
@@ -1391,17 +1811,21 @@ void G_WorkerSetupTileText(void *data) {
     const vec2 *offsets = NULL;
     float scale = 1.9f;
 
-    if (the_tile->stack_count == 1) {
+    if (the_tile->stack_count == 0) {
+      continue;
+    } else if (the_tile->stack_count == 1) {
       offsets = offsets_1;
       scale = 1.2;
     } else if (the_tile->stack_count == 2) {
       offsets = offsets_2;
       scale = 1.5;
-    } else {
+    } else if (the_tile->stack_count == 3) {
       offsets = offsets_3;
+    } else {
+      printf("[ERROR] G_WorkerSetupTileText assumes there is at most 3 stacks per tile. Stack count is %d on (%d,%d).\n", the_tile->stack_count, col, the_job->row);
     }
 
-    for (unsigned i = 0; i < 3; i++) {
+    for (unsigned i = 0; i < the_tile->stack_count; i++) {
       if (the_tile->stack_amounts[i] != 0) {
         sprintf(&amount_str[0], "%d", the_tile->stack_amounts[i]);
 
@@ -1631,7 +2055,7 @@ void G_Load_Game(game_t *game) {
       calloc(zpl_array_count(game->material_bank.entries) * 3 +
                  zpl_array_count(game->wall_bank.entries) * 16 +
                  zpl_array_count(game->terrain_bank.entries) * 3 +
-                 zpl_array_count(game->animal_bank.entries) * 3,
+                 zpl_array_count(game->pawn_bank.entries) * 3,
              sizeof(texture_job_t));
 
   for (unsigned i = 0; i < zpl_array_count(game->material_bank.entries); i++) {
@@ -1815,27 +2239,27 @@ void G_Load_Game(game_t *game) {
 
   offset += zpl_array_count(game->terrain_bank.entries) * 3;
 
-  for (unsigned i = 0; i < zpl_array_count(game->animal_bank.entries); i++) {
-    animal_bank_tEntry *entry = &game->animal_bank.entries[i];
-    animal_t *animal = &entry->value;
+  for (unsigned i = 0; i < zpl_array_count(game->pawn_bank.entries); i++) {
+    pawn_bank_tEntry *entry = &game->pawn_bank.entries[i];
+    pawn_t *pawn = &entry->value;
 
     texture_job_t *north_job = &texture_jobs[offset + i * 3 + 0];
     *north_job = (texture_job_t){
         .game = game,
-        .dest_text = &animal->north_tex,
-        .path = animal->north_path,
+        .dest_text = &pawn->north_tex,
+        .path = pawn->north_path,
     };
     texture_job_t *south_job = &texture_jobs[offset + i * 3 + 1];
     *south_job = (texture_job_t){
         .game = game,
-        .dest_text = &animal->south_tex,
-        .path = animal->south_path,
+        .dest_text = &pawn->south_tex,
+        .path = pawn->south_path,
     };
     texture_job_t *east_job = &texture_jobs[offset + i * 3 + 2];
     *east_job = (texture_job_t){
         .game = game,
-        .dest_text = &animal->east_tex,
-        .path = animal->east_path,
+        .dest_text = &pawn->east_tex,
+        .path = pawn->east_path,
     };
 
     zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, north_job);
@@ -2081,6 +2505,25 @@ void G_Add_Listener(game_t *game, listener_type_t type, const char *attachment,
 
     break;
   }
+  case G_THINK_UPDATE: {
+    for (unsigned s = 0; s < game->scene_count; s++) {
+      scene_t *the_scene = &game->scenes[s];
+
+      if (the_scene->agent_think_listener_count == 16) {
+        printf("[ERROR] Reached max number of `G_CAMERA_UPDATE` for the scene "
+               "`%s`.\n",
+               the_scene->name);
+
+        return;
+      }
+      the_scene
+          ->agent_think_listeners[the_scene->agent_think_listener_count]
+          .qcvm_func = func;
+      the_scene->agent_think_listener_count++;
+    }
+
+    break;
+  }
   default:
     break;
   }
@@ -2162,7 +2605,76 @@ void G_Get_Screen_Size_QC(qcvm_t *qcvm) {
   qcvm_return_vector(qcvm, (float)w, (float)h, 0.0f);
 }
 
-void G_Install_QCVM(qcvm_t *qcvm) {
+void G_Entity_GetPosition_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+
+  unsigned entity = qcvm_get_parm_int(qcvm, 0);
+
+  qcvm_return_vector(qcvm, game->transforms[entity].position[0], game->transforms[entity].position[1], 0.0f);
+}
+
+void G_Entity_GetInventoryAmount_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+
+  unsigned entity = qcvm_get_parm_int(qcvm, 0);
+  const char *recipe = qcvm_get_parm_string(qcvm, 1);
+
+  if (game->cpu_agents[entity].inventory_initialized) {
+    zpl_u64 key = zpl_fnv64(recipe, strlen(recipe));
+    float *amount = G_Inventory_get(&game->cpu_agents[entity].inventory, key);
+
+    if (!amount) {
+      qcvm_return_float(qcvm, 0.0f);
+    } else {
+      qcvm_return_float(qcvm, *amount);
+    }
+  } else {
+    qcvm_return_float(qcvm, 0.0f);
+  }
+}
+
+void G_Entity_RemoveInventoryAmount_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+
+  unsigned entity = qcvm_get_parm_int(qcvm, 0);
+  const char *recipe = qcvm_get_parm_string(qcvm, 1);
+  float amount = qcvm_get_parm_float(qcvm, 2);
+
+  if (game->cpu_agents[entity].inventory_initialized) {
+    zpl_u64 key = zpl_fnv64(recipe, strlen(recipe));
+    float *current_amount = G_Inventory_get(&game->cpu_agents[entity].inventory, key);
+
+    if (amount) {
+      (*current_amount) -= glm_min(*current_amount, amount);
+    }
+  }
+}
+
+void G_Entity_AddInventoryAmount_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+
+  unsigned entity = qcvm_get_parm_int(qcvm, 0);
+  const char *recipe = qcvm_get_parm_string(qcvm, 1);
+  float amount = qcvm_get_parm_float(qcvm, 2);
+
+  zpl_u64 key = zpl_fnv64(recipe, strlen(recipe));
+
+  if (!game->cpu_agents[entity].inventory_initialized) {
+    G_Inventory_init(&game->cpu_agents[entity].inventory, zpl_heap_allocator());
+    game->cpu_agents[entity].inventory_initialized = true;
+  }
+
+  float *current_amount = G_Inventory_get(&game->cpu_agents[entity].inventory, key);
+
+  if (!current_amount) {
+    G_Inventory_set(&game->cpu_agents[entity].inventory, key, 0.0f);
+    current_amount = G_Inventory_get(&game->cpu_agents[entity].inventory, key);
+  }
+
+  (*current_amount) += amount;
+}
+
+void G_QCVMInstall(qcvm_t *qcvm) {
   qcvm_export_t export_G_Add_Recipes = {
       .func = G_Add_Recipes_QC,
       .name = "G_Add_Recipes",
@@ -2298,9 +2810,9 @@ void G_Install_QCVM(qcvm_t *qcvm) {
       .type = QCVM_VECTOR,
   };
 
-  qcvm_export_t export_G_Add_Items = {
-      .func = G_Add_Items_QC,
-      .name = "G_Add_Items",
+  qcvm_export_t export_G_Item_AddAmount = {
+      .func = G_Item_AddAmount_QC,
+      .name = "G_Item_AddAmount",
       .argc = 5,
       .args[0] = {.name = "map", .type = QCVM_INT},
       .args[1] = {.name = "x", .type = QCVM_FLOAT},
@@ -2310,9 +2822,32 @@ void G_Install_QCVM(qcvm_t *qcvm) {
       .type = QCVM_VOID,
   };
 
-  qcvm_export_t export_G_Find_Nearest_Items = {
-      .func = G_Find_Nearest_Items_QC,
-      .name = "G_Find_Nearest_Items",
+  qcvm_export_t export_G_Item_RemoveAmount = {
+      .func = G_Item_RemoveAmount_QC,
+      .name = "G_Item_RemoveAmount",
+      .argc = 5,
+      .args[0] = {.name = "map", .type = QCVM_INT},
+      .args[1] = {.name = "x", .type = QCVM_FLOAT},
+      .args[2] = {.name = "y", .type = QCVM_FLOAT},
+      .args[3] = {.name = "recipe", .type = QCVM_STRING},
+      .args[4] = {.name = "amount", .type = QCVM_FLOAT},
+      .type = QCVM_VOID,
+  };
+
+  qcvm_export_t export_G_Item_GetAmount = {
+      .func = G_Item_GetAmount_QC,
+      .name = "G_Item_GetAmount",
+      .argc = 4,
+      .args[0] = {.name = "map", .type = QCVM_INT},
+      .args[1] = {.name = "x", .type = QCVM_FLOAT},
+      .args[2] = {.name = "y", .type = QCVM_FLOAT},
+      .args[3] = {.name = "recipe", .type = QCVM_STRING},
+      .type = QCVM_FLOAT,
+  };
+
+  qcvm_export_t export_G_Item_FindNearest = {
+      .func = G_Item_FindNearest_QC,
+      .name = "G_Item_FindNearest",
       .argc = 5,
       .args[0] = {.name = "map", .type = QCVM_INT},
       .args[1] = {.name = "org_x", .type = QCVM_FLOAT},
@@ -2322,15 +2857,71 @@ void G_Install_QCVM(qcvm_t *qcvm) {
       .type = QCVM_VECTOR,
   };
 
-  qcvm_export_t export_G_Add_Neutral_Animal = {
-      .func = G_Add_Neutral_Animal_QC,
-      .name = "G_Add_Neutral_Animal",
-      .argc = 5,
+  qcvm_export_t export_G_NeutralAnimal_Add = {
+      .func = G_NeutralAnimal_Add_QC,
+      .name = "G_NeutralAnimal_Add",
+      .argc = 4,
       .args[0] = {.name = "map", .type = QCVM_INT},
       .args[1] = {.name = "x", .type = QCVM_FLOAT},
       .args[2] = {.name = "y", .type = QCVM_FLOAT},
       .args[3] = {.name = "recipe", .type = QCVM_STRING},
       .type = QCVM_ENTITY,
+  };
+
+  qcvm_export_t export_G_Colonist_Add = {
+      .func = G_Colonist_Add_QC,
+      .name = "G_Colonist_Add",
+      .argc = 4,
+      .args[0] = {.name = "map", .type = QCVM_INT},
+      .args[1] = {.name = "x", .type = QCVM_FLOAT},
+      .args[2] = {.name = "y", .type = QCVM_FLOAT},
+      .args[3] = {.name = "faction", .type = QCVM_INT},
+      .args[4] = {.name = "recipe", .type = QCVM_STRING},
+      .type = QCVM_ENTITY,
+  };
+
+  qcvm_export_t export_G_Entity_Goto = {
+      .func = G_Entity_Goto_QC,
+      .name = "G_Entity_Goto",
+      .argc = 3,
+      .args[0] = {.name = "entity", .type = QCVM_INT},
+      .args[1] = {.name = "x", .type = QCVM_FLOAT},
+      .args[2] = {.name = "y", .type = QCVM_FLOAT},
+  };
+
+  qcvm_export_t export_G_Entity_GetPosition = {
+      .func = G_Entity_GetPosition_QC,
+      .name = "G_Entity_GetPosition",
+      .argc = 1,
+      .args[0] = {.name = "entity", .type = QCVM_INT},
+      .type = QCVM_VECTOR,
+  };
+
+  qcvm_export_t export_G_Entity_GetInventoryAmount = {
+      .func = G_Entity_GetInventoryAmount_QC,
+      .name = "G_Entity_GetInventoryAmount",
+      .argc = 2,
+      .args[0] = {.name = "entity", .type = QCVM_INT},
+      .args[1] = {.name = "recipe", .type = QCVM_STRING},
+      .type = QCVM_FLOAT,
+  };
+
+  qcvm_export_t export_G_Entity_RemoveInventoryAmount = {
+      .func = G_Entity_RemoveInventoryAmount_QC,
+      .name = "G_Entity_RemoveInventoryAmount",
+      .argc = 3,
+      .args[0] = {.name = "entity", .type = QCVM_INT},
+      .args[1] = {.name = "recipe", .type = QCVM_STRING},
+      .args[2] = {.name = "amount", .type = QCVM_FLOAT},
+  };
+
+  qcvm_export_t export_G_Entity_AddInventoryAmount_QC = {
+      .func = G_Entity_AddInventoryAmount_QC,
+      .name = "G_Entity_AddInventoryAmount",
+      .argc = 3,
+      .args[0] = {.name = "entity", .type = QCVM_INT},
+      .args[1] = {.name = "recipe", .type = QCVM_STRING},
+      .args[2] = {.name = "amount", .type = QCVM_FLOAT},
   };
 
   qcvm_add_export(qcvm, &export_G_Add_Recipes);
@@ -2350,9 +2941,17 @@ void G_Install_QCVM(qcvm_t *qcvm) {
   qcvm_add_export(qcvm, &export_G_Get_Axis);
   qcvm_add_export(qcvm, &export_G_Get_Mouse_Position);
   qcvm_add_export(qcvm, &export_G_Get_Screen_Size);
-  qcvm_add_export(qcvm, &export_G_Add_Items);
-  qcvm_add_export(qcvm, &export_G_Find_Nearest_Items);
-  qcvm_add_export(qcvm, &export_G_Add_Neutral_Animal);
+  qcvm_add_export(qcvm, &export_G_Item_AddAmount);
+  qcvm_add_export(qcvm, &export_G_Item_RemoveAmount);
+  qcvm_add_export(qcvm, &export_G_Item_GetAmount);
+  qcvm_add_export(qcvm, &export_G_Item_FindNearest);
+  qcvm_add_export(qcvm, &export_G_NeutralAnimal_Add);
+  qcvm_add_export(qcvm, &export_G_Colonist_Add);
+  qcvm_add_export(qcvm, &export_G_Entity_Goto);
+  qcvm_add_export(qcvm, &export_G_Entity_GetPosition);
+  qcvm_add_export(qcvm, &export_G_Entity_GetInventoryAmount);
+  qcvm_add_export(qcvm, &export_G_Entity_RemoveInventoryAmount);
+  qcvm_add_export(qcvm, &export_G_Entity_AddInventoryAmount_QC);
 }
 
 bool G_Load(client_t *client, game_t *game) {
@@ -2385,7 +2984,9 @@ bool G_Load(client_t *client, game_t *game) {
     }
 
     qclib_install(game->qcvms[i]);
-    G_Install_QCVM(game->qcvms[i]);
+    G_QCVMInstall(game->qcvms[i]);
+
+    G_CommonInstall(game->qcvms[i]);
     G_TerrainInstall(game->qcvms[i]);
 
     qcvm_set_user_data(game->qcvms[i], game);
@@ -2451,10 +3052,10 @@ void G_AddPawn(game_t *game, struct Transform *transform,
   };
 
   cpu_agent_t cpu_agent = {
-      .state = AGENT_PATH_FINDING,
+      .state = AGENT_NOTHING,
       .type = agent_type,
       .speed = 0.05,
-      .target = {2.0, 2.0},
+      .target = {},
   };
 
   game->cpu_agents[entity] = cpu_agent;
