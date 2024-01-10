@@ -156,10 +156,10 @@ typedef struct vk_text_t {
 
   VkDescriptorSetLayout text_layout;
   VkDescriptorSet text_set;
-  
+
   VkBuffer text_buffer;
   VmaAllocation text_alloc;
-  void* text_data; // mapped data
+  void *text_data; // mapped data
 } vk_text_t;
 
 typedef struct vk_assets_t {
@@ -223,6 +223,7 @@ struct vk_rend_t {
   VkCommandBuffer transfer_command_buffer;
   VkDescriptorPool descriptor_pool;
   VkDescriptorPool descriptor_bindless_pool;
+  VkDescriptorPool descriptor_imgui_pool;
 
   VkDescriptorSetLayout global_ubo_desc_set_layout;
   VkDescriptorSet global_ubo_desc_set[3];
@@ -268,7 +269,7 @@ void VK_DrawGBuffer(vk_rend_t *rend);
 void VK_DestroyGBuffer(vk_rend_t *rend);
 
 bool VK_InitImmediate(vk_rend_t *rend);
-void VK_DrawImmediate(vk_rend_t *rend, game_state_t *state);
+void VK_DrawImmediate(client_t* client, vk_rend_t *rend, game_state_t *state);
 void VK_DestroyImmediate(vk_rend_t *rend);
 
 void *CL_GetWindow(client_t *client);
@@ -280,6 +281,8 @@ void *CL_GetWindow(client_t *client);
 VkShaderModule VK_LoadShaderModule(vk_rend_t *rend, const char *path);
 
 void VK_Gigabarrier(VkCommandBuffer cmd);
+
+void VK_DrawUI(vk_rend_t *rend, VkCommandBuffer cmd);
 
 void VK_TransitionColorTexture(VkCommandBuffer cmd, VkImage image,
                                VkImageLayout from_layout,
@@ -300,9 +303,9 @@ VK_PipelineShaderStageCreateInfo(VkShaderStageFlagBits stage,
                                  VkShaderModule module) {
   return (VkPipelineShaderStageCreateInfo){
       .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-      .pName = "main",
       .stage = stage,
       .module = module,
+      .pName = "main",
   };
 }
 
@@ -329,9 +332,9 @@ VK_PipelineRasterizationStateCreateInfo(VkPolygonMode polygon_mode) {
       .depthClampEnable = false,
       .rasterizerDiscardEnable = false,
       .polygonMode = polygon_mode,
-      .lineWidth = 1.0f,
       .cullMode = VK_CULL_MODE_NONE,
       .frontFace = VK_FRONT_FACE_CLOCKWISE,
+      .lineWidth = 1.0f,
   };
 }
 
@@ -339,8 +342,8 @@ static inline VkPipelineMultisampleStateCreateInfo
 VK_PipelineMultisampleStateCreateInfo() {
   return (VkPipelineMultisampleStateCreateInfo){
       .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-      .sampleShadingEnable = VK_FALSE,
       .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+      .sampleShadingEnable = VK_FALSE,
       .minSampleShading = 1.0f,
       .pSampleMask = NULL,
   };
@@ -349,8 +352,8 @@ VK_PipelineMultisampleStateCreateInfo() {
 static inline VkPipelineColorBlendAttachmentState
 VK_PipelineColorBlendAttachmentState() {
   return (VkPipelineColorBlendAttachmentState){
+      .blendEnable = VK_FALSE,
       .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
-      .blendEnable = VK_FALSE,
   };
 }

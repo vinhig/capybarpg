@@ -21,7 +21,7 @@ typedef enum client_state_t {
   CLIENT_RUNNING,
   CLIENT_QUITTING,
   CLIENT_PAUSED,
-  CLIENT_CREATING,
+  CLIENT_LOADING,
   CLIENT_DESTROYING,
 } client_state_t;
 
@@ -29,6 +29,8 @@ bool CL_ParseClientDesc(client_desc_t *desc, int argc, char *argv[]);
 client_t *CL_CreateClient(const char *title, client_desc_t *desc);
 
 client_state_t CL_GetClientState(client_t *client);
+void CL_SetClientState(client_t *client, client_state_t state);
+
 vk_rend_t *CL_GetRend(client_t *client);
 void CL_GetViewDim(client_t *client, unsigned *width, unsigned *height);
 

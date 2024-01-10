@@ -1,5 +1,6 @@
 #pragma once
 
+#include "client/cl_client.h"
 typedef struct game_state_t game_state_t;
 typedef struct client_t client_t;
 typedef struct vk_rend_t vk_rend_t;
@@ -16,7 +17,7 @@ typedef struct vk_model_t vk_model_t;
 
 vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height);
 
-void VK_Draw(vk_rend_t *rend, game_state_t *game);
+void VK_Draw(client_t *client, vk_rend_t *rend, game_state_t *game);
 
 void VK_DestroyRend(vk_rend_t *rend);
 
@@ -63,3 +64,7 @@ void VK_UpdateFontTextures(vk_rend_t *rend, texture_t *textures,
 void VK_UploadSingleTexture(vk_rend_t *rend, texture_t *texture);
 
 const char *VK_GetError();
+
+void VK_InitUI(client_t* client, vk_rend_t* rend);
+void VK_BeginUI(client_t* client);
+void VK_DestroyUI(vk_rend_t* rend);

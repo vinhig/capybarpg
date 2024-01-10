@@ -1,9 +1,9 @@
 #pragma once
 
-#include "client/cl_client.h"
-#include "game/g_game.h"
-#include "vk/vk_system.h"
-#include "vk/vk_vulkan.h"
+#include <client/cl_client.h>
+#include <game/g_game.h>
+#include <vk/vk_system.h>
+#include <vk/vk_vulkan.h>
 
 #include <cglm/cam.h>
 #include <cglm/cglm.h>

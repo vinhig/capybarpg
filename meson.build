@@ -119,6 +119,18 @@ jps = executable('a_star',
   include_directories: [include_directories('external/')]
 )
 
+imgui = static_library('imgui',
+  'external/cimgui.cpp',
+  'external/imgui/imgui_draw.cpp',
+  'external/imgui/imgui_impl_sdl2.cpp',
+  'external/imgui/imgui_impl_vulkan.cpp',
+  'external/imgui/imgui_tables.cpp',
+  'external/imgui/imgui_demo.cpp',
+  'external/imgui/imgui.cpp',
+  'external/imgui/imgui_widgets.cpp',
+  include_directories: [include_directories('external/')]
+)
+
 qcvm = static_library('qcvm',
   'external/qcvm/qcvm_bootstrap.c',
   'external/qcvm/qcvm_entities.c',
@@ -140,6 +152,7 @@ exe = executable('maidenless',
 
   'source/client/cl_client.c',
   'source/client/cl_console.c',
+  'source/client/cl_imgui.cpp',
 
   'source/game/g_game.c',
   'source/game/g_bindings.c',
@@ -154,6 +167,7 @@ exe = executable('maidenless',
   'external/zpl/zpl_implementation.c',
   'external/vk_mem_alloc.cpp',
   'external/stbi_image.c',
+  'external/stbi_image_write.c',
 
   'external/jps.c',
   'external/heap.c',
@@ -166,6 +180,6 @@ exe = executable('maidenless',
     include_directories('external/qcvm/'),
     include_directories('external/qclib/')
   ],
-  link_with: [qcvm],
+  link_with: [qcvm, imgui],
   dependencies: [sdl2, opengl, vulkan, freetype, dl, m, shaders, images, chad_shaders]
 )

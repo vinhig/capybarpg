@@ -1,17 +1,17 @@
-#include "game/g_game.h"
-#include "cglm/mat4.h"
-#include "cglm/util.h"
-#include "freetype/freetype.h"
-#include "intlist.h"
-#include "qcvm.h"
-#include "vk/vk_vulkan.h"
+#include "cimgui.h"
+#include "client/cl_client.h"
+#include <cglm/mat4.h>
+#include <cglm/util.h>
 #include <client/cl_input.h>
 #include <float.h>
+#include <freetype/freetype.h>
+#include <game/g_game.h>
 #include <game/g_private.h>
-#include <math.h>
-#include <stbi_image.h>
-
+#include <intlist.h>
 #include <jps.h>
+#include <math.h>
+#include <qcvm.h>
+#include <stbi_image.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,11 +19,14 @@
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
+#include <vk/vk_vulkan.h>
 
 void G_WorkerRegisterThread(void *data);
 void G_WorkerSetupTileText(void *data);
 void G_WorkerLoadTexture(void *data);
 void G_WorkerLoadFont(void *data);
+
+void My_ImGui_NewFrame(client_t *client);
 
 extern const unsigned char no_image[];
 extern const unsigned no_image_size;
@@ -349,6 +352,10 @@ void G_ResetGameState(game_t *game) {
 
 game_state_t *G_TickGame(client_t *client, game_t *game) {
   G_ResetGameState(game);
+
+  if (CL_GetClientState(client) == CLIENT_RUNNING) {
+    VK_BeginUI(client);
+  }
 
   unsigned w, h;
   CL_GetViewDim(client, &w, &h);
@@ -2020,6 +2027,7 @@ void G_WorkerLoadTexture(void *data) {
 }
 
 void G_Load_Game(game_t *game) {
+  CL_SetClientState(game->client, CLIENT_LOADING);
   zpl_f64 now = zpl_time_rel();
 
   // Load the default texture, that'll have a null index (index == 0)
@@ -2275,9 +2283,6 @@ void G_Load_Game(game_t *game) {
     CL_DrawClient(game->client, game, state);
   }
 
-  printf("[VERBOSE] Loading game took `%f` ms\n",
-         (float)(zpl_time_rel() - now));
-
   VK_UploadMapTextures(game->rend, game->map_textures, game->map_texture_count);
   VK_UploadFontTextures(game->rend, game->font_textures, game->font_texture_count);
 
@@ -2287,6 +2292,11 @@ void G_Load_Game(game_t *game) {
   game->next_scene = NULL;
 
   free(texture_jobs);
+
+  printf("[VERBOSE] Loading game took `%f` ms\n",
+         (float)(zpl_time_rel() - now) *100);
+
+  CL_SetClientState(game->client, CLIENT_RUNNING);
 }
 
 void G_Load_Game_QC(qcvm_t *qcvm) {

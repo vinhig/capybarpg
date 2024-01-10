@@ -1,3 +1,4 @@
+#include "client/cl_client.h"
 #include "vk/vk_private.h"
 #include "vk/vk_system.h"
 #include "vk/vk_vulkan.h"
@@ -441,7 +442,7 @@ bool VK_InitImmediate(vk_rend_t *rend) {
   return true;
 }
 
-void VK_DrawImmediate(vk_rend_t *rend, game_state_t *state) {
+void VK_DrawImmediate(client_t *client, vk_rend_t *rend, game_state_t *state) {
   memset(rend->text->text_data, 0, sizeof(game_text_draw_t) * state->text_count);
 
   memcpy(rend->text->text_data, state->texts, sizeof(game_text_draw_t) * state->text_count);
@@ -538,6 +539,10 @@ void VK_DrawImmediate(vk_rend_t *rend, game_state_t *state) {
                             &rend->text->text_set, 0, NULL);
 
     vkCmdDraw(cmd, 6, state->text_count, 0, 0);
+  }
+
+  if (CL_GetClientState(client) == CLIENT_RUNNING) {
+    VK_DrawUI(rend, cmd);
   }
 
   vkCmdEndRendering(cmd);

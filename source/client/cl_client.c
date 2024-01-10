@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <wchar.h>
 
+#include <cimgui.h>
+
 #include "game/g_game.h"
 
 struct client_t {
@@ -27,6 +29,8 @@ struct client_t {
 void *CL_GetWindow(client_t *client) { return client->window; }
 
 input_t *CL_GetInput(client_t *client) { return &client->input; }
+
+void ImGui_ProcessEvent(SDL_Event *event);
 
 bool CL_ParseClientDesc(client_desc_t *desc, int argc, char *argv[]) {
   // Arbitrary decision: in debug mode, a badly formed argument is fatal
@@ -153,7 +157,7 @@ client_t *CL_CreateClient(const char *title, client_desc_t *desc) {
 
   client_t *client = calloc(1, sizeof(client_t));
 
-  client->state = CLIENT_CREATING;
+  client->state = CLIENT_RUNNING;
   client->window = window;
 
   // TODO: the referenced GPU in the description should be passed
@@ -166,7 +170,6 @@ client_t *CL_CreateClient(const char *title, client_desc_t *desc) {
     return NULL;
   }
 
-  client->state = CLIENT_RUNNING;
   client->v_width = desc->width;
   client->v_height = desc->height;
 
@@ -184,6 +187,8 @@ client_t *CL_CreateClient(const char *title, client_desc_t *desc) {
 }
 
 client_state_t CL_GetClientState(client_t *client) { return client->state; }
+
+void CL_SetClientState(client_t *client, client_state_t state) { client->state = state; }
 
 vk_rend_t *CL_GetRend(client_t *client) { return client->rend; }
 
@@ -238,6 +243,8 @@ void CL_UpdateClient(client_t *client) {
     //   client->input.view.y_axis = 0.0;
 
     while (SDL_PollEvent(&event)) {
+      ImGui_ProcessEvent(&event);
+
       if (event.type == SDL_QUIT) {
         client->state = CLIENT_QUITTING;
         return;
@@ -323,7 +330,7 @@ void CL_UpdateClient(client_t *client) {
 
 void CL_DrawClient(client_t *client, game_t *game, game_state_t *state) {
   CL_DrawConsole(client, game, state, client->console);
-  VK_Draw(client->rend, state);
+  VK_Draw(client, client->rend, state);
 }
 
 void CL_ExitClient(client_t *client) { client->state = CLIENT_QUITTING; }

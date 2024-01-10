@@ -45,7 +45,7 @@ int main(int argc, char **argv) {
     return -1;
   }
 
-  game_state_t* state;
+  game_state_t *state;
   unsigned frame = 0;
 
   while ((CL_GetClientState(client) != CLIENT_DESTROYING) &&

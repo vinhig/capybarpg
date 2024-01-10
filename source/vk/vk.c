@@ -1,8 +1,10 @@
+#include <cimgui.h>
+// #include <imgui/cimgui_impl_vulkan.h>
 #include "vk/vk_private.h"
 #include "vk/vk_system.h"
 #include "vk/vk_vulkan.h"
 
-#include <assert.h>
+#include <cimgui.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -485,9 +487,15 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
     // VkDeviceQueueCreateInfo queue_infos[] = {queue_graphics_info,
     //                                          queue_transfer_info};
 
+    VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT dynamic_rendering = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_FEATURES_EXT,
+        .dynamicRenderingUnusedAttachments = VK_TRUE,
+    };
+
     VkPhysicalDeviceRobustness2FeaturesEXT robustness2 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
         .nullDescriptor = VK_TRUE,
+        .pNext = &dynamic_rendering,
     };
 
     VkPhysicalDeviceFeatures vulkan = {
@@ -757,7 +765,6 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
           .pObjectName = &name[0],
       };
       rend->vkSetDebugUtilsObjectName(rend->device, &logic_fence);
-
     }
     // The transfer queue is by default free to be used
     // So create the fence with a SIGNALED state
@@ -958,6 +965,32 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
     }
   }
 
+  {
+    VkDescriptorPoolSize pool_sizes[] =
+        {
+            {VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
+            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
+            {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000},
+            {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000},
+            {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000},
+            {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000},
+            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
+            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000},
+            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000},
+            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000},
+            {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000}};
+
+    VkDescriptorPoolCreateInfo pool_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+        .maxSets = 1000,
+        .poolSizeCount = 11,
+        .pPoolSizes = pool_sizes,
+    };
+
+    vkCreateDescriptorPool(rend->device, &pool_info, NULL, &rend->descriptor_imgui_pool);
+  }
+
   if (!VK_InitECS(rend, 3000)) {
     VK_PUSH_ERROR("Couldn't create ECS subsystem.\n");
   }
@@ -973,6 +1006,8 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
 
   rend->immediate_handle_capacity = 16;
   rend->immediate_handles = calloc(16, sizeof(vk_texture_handle_t));
+
+  VK_InitUI(client, rend);
 
   return rend;
 }
@@ -992,7 +1027,7 @@ void VK_Present(vk_rend_t *rend, unsigned image_index) {
   rend->current_frame++;
 }
 
-void VK_Draw(vk_rend_t *rend, game_state_t *game) {
+void VK_Draw(client_t *client, vk_rend_t *rend, game_state_t *game) {
   // VK_Draw waits on rend->logic_fence[i]
   // VK_TickSystems waits on rend->rend_fence[i-1]
   vkWaitForFences(rend->device, 1,
@@ -1073,7 +1108,7 @@ void VK_Draw(vk_rend_t *rend, game_state_t *game) {
 
   VK_DrawGBuffer(rend);
 
-  VK_DrawImmediate(rend, game);
+  VK_DrawImmediate(client, rend, game);
 
   // Before rendering, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR ->
   // VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL.
@@ -1221,6 +1256,8 @@ void VK_Draw(vk_rend_t *rend, game_state_t *game) {
 void VK_DestroyRend(vk_rend_t *rend) {
   vkDeviceWaitIdle(rend->device);
 
+  VK_DestroyUI(rend);
+
   VK_DestroyImmediate(rend);
   VK_DestroyGBuffer(rend);
   VK_DestroyECS(rend);
@@ -1285,6 +1322,7 @@ void VK_DestroyRend(vk_rend_t *rend) {
 
   vkDestroyDescriptorPool(rend->device, rend->descriptor_pool, NULL);
   vkDestroyDescriptorPool(rend->device, rend->descriptor_bindless_pool, NULL);
+  vkDestroyDescriptorPool(rend->device, rend->descriptor_imgui_pool, NULL);
 
   vmaDestroyAllocator(rend->allocator);
 
