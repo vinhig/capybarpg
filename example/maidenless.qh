@@ -1,0 +1,146 @@
+enum
+{
+	G_SCENE_START,
+	G_SCENE_END,
+	G_SCENE_UPDATE,
+	G_CAMERA_UPDATE,
+	G_THINK_UPDATE,
+};
+
+enum
+{
+    AGENT_NOTHING,
+    AGENT_PATH_FINDING,
+    AGENT_MOVING,
+    AGENT_DRAFTED,
+};
+
+enumflags {
+  AGENT_ANIMAL,
+  AGENT_PLAYER,
+  AGENT_FACTION0,
+  AGENT_FACTION1,
+  AGENT_FACTION2,
+  AGENT_FACTION3,
+  AGENT_FACTION4,
+  AGENT_FACTION5,
+  AGENT_FACTION6,
+};
+
+#define true 1
+#define false 0
+
+// In you `main` function, you can load an infinite number of "recipes.json".
+// Recipes detail objects that can be constructed in the worlds or at a workshop,
+// such as:
+// * surface (dirt, concrete, ...; some can be constructed in the world)
+// * pawns/animals (can't be crafted, but can be spawned nonetheless)
+// * walls (impassable object of 1x1 size; constructed in the world)
+// * furnitures (impassable object of an arbitrary size, rotation
+/// 			       and an optional passive for the room; constructed in the world)
+// * workshop (impassable furniture of an arbitrary size, rotation
+//			       and an optional set of bills; constructed in the world)
+// * weapons (you get it; constructed at a workshop)
+// * apparels (you get it; constructed at a workshop)
+// Recipes can be optional, for example if you want to add a specific DLC or
+// but it's not a big deal if it's not present on the system. Method will return
+// true if the recipes was found, and 0 otherwise.
+float G_Add_Recipes(string path, int required) = #0 : G_Add_Recipes;
+
+// When all desired recipes are loaded, you can trigger the loading
+// which will display a cute loading screen of your choice.
+// The loading screen is a state in itself that you have to specify.
+// It triggers the exact same listeners of a regular scene, just don't forget
+// that no assets will be available apart from the one you manually loaded.
+// This is kinda weird, but that also means mods can also modify the loading
+// screen (modifying background image, music, etc).
+// Concerning the listeners, the G_SCENE_UPDATE will be called each time
+// an assets (music, images, recipes, ...) finished its loading, so you can
+// fetched its name to display it or to display your waifu loading bar.
+
+// Trigger a loading screen, and load all previously specified recipes.
+void G_Load_Game(string loading_scene_name, string next_scene) = #0 : G_Load_Game;
+
+// Call it only when you're in a loading scene. Otherwise the
+// return value can be wrong or undefined.
+string G_Get_Last_Asset_Loaded() = #0 : G_Get_Last_Asset_Loaded;
+
+// Scenes are like "state" in maidenless engine.
+// Add a listener for their START, UPDATE and END if
+// you want to add, remove or modify a component.
+void G_Scene_Create(string s) = #0;
+void G_Scene_Run(string s) = #0;
+
+// If there is a current scene, you can modify its content
+// with the following methods.
+// Be aware, there are kinda "high-level".
+
+// Initialize a map with a specific size. All tiles will be plain
+// dirt, with no wall or any kind of furnitures. Returns a identifier
+// allowing the user to enable/disable it. The first map to be initialized
+// is de facto the current enabled map for the given scene.
+int G_Map_Create(float w, float h) = #0;
+
+// Add a "wall" from a recipe that details the number of tick to build,
+// its required materials, ... with an optional task for the pawns to
+// construct it.
+// A wall is an impassable object that:
+// * influences path finding
+// * can optionally have health (in percentage: 100% -> full health)
+void G_Map_AddWall(string recipe, float x, float y, float health, int to_build, int map) = #0;
+void G_Map_SetTerrainType(int map, float x, float y, string recipe) = #0;
+string G_Map_GetTerrainType(int map, float x, float y) = #0;
+
+// Scene the current map to display and update for the specified scene.
+void G_Scene_SetCurrentMap(string scene, int map) = #0;
+
+// Attachment specify the scene to attach the listener to.
+// When creating a G_THINK_UPDATE listener, it'll attach itself to all
+// scenes of the game.
+void G_Add_Listener(int type, string attachment, string func) = #0 : G_Add_Listener;
+
+// Immediate drawing methods. Useful when you want to draw a small number of
+// elements (in a loading screen for example). You have to call them in the update
+// listener. This is NOT the optimized path for drawing stuff! It triggers the loading
+// of the specified asset (only the first time).
+void G_Draw_Image_Relative(string path, float w, float h, float x, float y, float z) = #0 : G_Draw_Image_Relative;
+
+vector G_Camera_GetPosition() = #0;
+void G_Camera_SetPosition(vector value) = #0 ;
+float G_Camera_GetZoom() = #0;
+void G_Camera_SetZoom(float value) = #0;
+
+float G_Input_GetAxisValue(string axis) = #0;
+vector G_Input_GetMousePosition() = #0;
+
+vector G_Screen_GetSize() = #0;
+
+// Place a specific amount of items on a tile. If items of the same type are already present, the method will try
+// to stack them with respect to the max stack size. The method returns the remaining amount of items, in case
+// there wasn't enough room to put the whole amount.
+float G_Item_AddAmount(int map, float x, float y, string recipe, float amount) = #0;
+void  G_Item_RemoveAmount(int map, float x, float y, string recipe, float amount) = #0;
+float G_Item_GetAmount(int map, float x, float y, string recipe) = #0;
+
+// Find the nearest stack of specific items. The x and y components of the vector
+// returns the stack's position, while z returns the amount of item in the stack.
+// Sometimes the map may contain multiple stack of the same item, so `start_search`
+// allows specifying which stack's position should be returned. The distance is naively
+// computed and doesn't care about obstacles. If nothing was found, vector.z = -1
+vector G_Item_FindNearest(int map, float org_x, float org_y, string recipe, float start_search) = #0;
+
+entity G_NeutralAnimal_Add(int map, float x, float y, string recipe) = #0;
+entity G_Colonist_Add(int map, float x, float y, int faction, string recipe) = #0;
+
+vector G_Entity_GetPosition(entity agent) = #0;
+void   G_Entity_Goto(entity agent, float dest_x, float dest_y) = #0 ;
+
+// Returns a random number from a uniformly distributed range
+float C_Rand(float min, float max) = #0;
+
+float G_Entity_GetInventoryAmount(entity e, string recipe) = #0;
+float G_Entity_RemoveInventoryAmount(entity e, string recipe, float amount) = #0;
+float G_Entity_AddInventoryAmount(entity e, string recipe, float amount) = #0;
+
+void UI_Text(string text, float x, float y, int anchor) = #0;
+int UI_Button(string text, float x, float y, int anchor) = #0;

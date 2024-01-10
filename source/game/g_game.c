@@ -505,7 +505,7 @@ texture_t G_LoadSingleTexture(const char *path) {
   };
 }
 
-int G_Create_Map(game_t *game, unsigned w, unsigned h) {
+int G_Map_Create(game_t *game, unsigned w, unsigned h) {
   if (game->map_count == 16) {
     printf(
         "[ERROR] Max number of map reached (16), who needs that much map???\n");
@@ -543,7 +543,7 @@ int G_Create_Map(game_t *game, unsigned w, unsigned h) {
   return map;
 }
 
-void G_Create_Map_QC(qcvm_t *qcvm) {
+void G_Map_Create_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
 
   float w = qcvm_get_parm_float(qcvm, 0);
@@ -565,17 +565,17 @@ void G_Create_Map_QC(qcvm_t *qcvm) {
     return;
   }
 
-  qcvm_return_int(qcvm, G_Create_Map(game, w, h));
+  qcvm_return_int(qcvm, G_Map_Create(game, w, h));
 }
 
-void G_Set_Current_Map_QC(qcvm_t *qcvm) {
+void G_Scene_SetCurrentMap_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
 
   const char *scene_name = qcvm_get_parm_string(qcvm, 0);
   int map = qcvm_get_parm_int(qcvm, 1);
 
   if (map < 0 || map >= (int)game->map_count) {
-    printf("[ERROR] Assertion G_Set_Current_Map_QC(map >= 0 || map < "
+    printf("[ERROR] Assertion G_Scene_SetCurrentMap_QC(map >= 0 || map < "
            "game->map_count) "
            "[map = %d, map_count = %d] should be "
            "verified.\n",
@@ -593,7 +593,7 @@ void G_Set_Current_Map_QC(qcvm_t *qcvm) {
   }
 
   if (!scene) {
-    printf("[ERROR] Assertion G_Set_Current_Map_QC(map exists) [map = \"%s\"] "
+    printf("[ERROR] Assertion G_Scene_SetCurrentMap_QC(map exists) [map = \"%s\"] "
            "should be verified.\n",
            scene_name);
     return;
@@ -1724,12 +1724,12 @@ void G_Draw_Image_Relative_QC(qcvm_t *qcvm) {
   G_Draw_Image_Relative(game, path, w, h, x, y, z);
 }
 
-// TODO: G_Prepare_Scene have to be called before calling G_Run_Scene.
-// G_Run_Scene only set the current_scene to be the specified scene. It allows
+// TODO: G_Prepare_Scene have to be called before calling G_Scene_Run.
+// G_Scene_Run only set the current_scene to be the specified scene. It allows
 // calling an running the start listener while the previous scene still run (for
 // example, to let the loading animation be performed).
-void G_Run_Scene(game_t *game, const char *scene_name) {
-  printf("G_Run_Scene(\"%s\") TODO: should make sure this is call from the main thread;\n", scene_name);
+void G_Scene_Run(game_t *game, const char *scene_name) {
+  printf("G_Scene_Run(\"%s\") TODO: should make sure this is call from the main thread;\n", scene_name);
 
   // Fetch the scene with this name
   scene_t *scene = NULL;
@@ -1748,7 +1748,7 @@ void G_Run_Scene(game_t *game, const char *scene_name) {
 
   // First, call all the end listeners in order for the previous scene
   // The invokation of listeners happens on the same thread that called
-  // G_Run_Scene. I don't know if it's a good idea...
+  // G_Scene_Run. I don't know if it's a good idea...
   if (game->current_scene) {
     for (unsigned j = 0; j < game->current_scene->end_listener_count; j++) {
       qcvm_run(game->qcvms[0], game->current_scene->end_listeners[j].qcvm_func);
@@ -1764,12 +1764,12 @@ void G_Run_Scene(game_t *game, const char *scene_name) {
   }
 }
 
-void G_Run_Scene_QC(qcvm_t *qcvm) {
+void G_Scene_Run_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
 
   const char *scene_name = qcvm_get_parm_string(qcvm, 0);
 
-  G_Run_Scene(game, scene_name);
+  G_Scene_Run(game, scene_name);
 }
 
 const vec2 offsets_1[3] = {
@@ -2281,7 +2281,7 @@ void G_Load_Game(game_t *game) {
   VK_UploadMapTextures(game->rend, game->map_textures, game->map_texture_count);
   VK_UploadFontTextures(game->rend, game->font_textures, game->font_texture_count);
 
-  G_Run_Scene(game, game->next_scene);
+  G_Scene_Run(game, game->next_scene);
 
   free(game->next_scene);
   game->next_scene = NULL;
@@ -2298,7 +2298,7 @@ void G_Load_Game_QC(qcvm_t *qcvm) {
   game->next_scene = memcpy(malloc(strlen(next_scene) + 1), next_scene,
                             strlen(next_scene) + 1);
 
-  G_Run_Scene(game, loading_scene_name);
+  G_Scene_Run(game, loading_scene_name);
 
   G_Load_Game(game);
 }
@@ -2313,66 +2313,7 @@ void G_Get_Last_Asset_Loaded_QC(qcvm_t *qcvm) {
   qcvm_return_string(qcvm, G_Get_Last_Asset_Loaded(game));
 }
 
-void G_Add_Wall_QC(qcvm_t *qcvm) {
-  game_t *game = qcvm_get_user_data(qcvm);
-  const char *recipe = qcvm_get_parm_string(qcvm, 0);
-  float x = qcvm_get_parm_float(qcvm, 1);
-  float y = qcvm_get_parm_float(qcvm, 2);
-
-  float health = qcvm_get_parm_float(qcvm, 3);
-  bool to_build = qcvm_get_parm_int(qcvm, 4); // Ignored for the time being
-  int map = qcvm_get_parm_int(qcvm, 4);
-  zpl_unused(to_build);
-
-  if (health <= 0.0f) {
-    printf("[ERROR] Assertion G_Add_Wall_QC(health > 0.0) [health = %f] should "
-           "be verified.\n",
-           health);
-    return;
-  }
-
-  if (map < 0 || map >= (int)game->map_count) {
-    printf("[ERROR] Assertion G_Add_Wall_QC(map >= 0 || map < game->map_count) "
-           "[map = %d, map_count = %d] should be "
-           "verified.\n",
-           map, game->map_count);
-    return;
-  }
-
-  map_t *the_map = &game->maps[map];
-
-  zpl_u64 key = zpl_fnv64(recipe, strlen(recipe));
-  wall_t *the_wall = G_Walls_get(&game->wall_bank, key);
-
-  if (!the_wall) {
-    printf("[ERROR] Assertion G_Add_Wall_QC(recipe exists) [recipe = \"%s\"] "
-           "should be verified.\n",
-           recipe);
-    return;
-  }
-
-  if (x < 0.0f || x >= the_map->w) {
-    printf("[ERROR] Assertion G_Map_Set_Terrain_Type(x >= 0 || x < "
-           "map->w) "
-           "[x = %d, map->w = %d] should be "
-           "verified.\n",
-           (unsigned)x, the_map->w);
-    return;
-  }
-
-  if (y < 0.0f || y >= the_map->h) {
-    printf("[ERROR] Assertion G_Map_Set_Terrain_Type(y >= 0 || y < "
-           "map->h) "
-           "[y = %d, map->h = %d] should be "
-           "verified.\n",
-           (unsigned)x, the_map->h);
-    return;
-  }
-
-  G_Add_Wall(game, map, x, y, health, the_wall);
-}
-
-void G_Add_Scene(game_t *game, const char *name) {
+void G_Scene_Create(game_t *game, const char *name) {
   if (game->scene_capacity == 0) {
     game->scenes = calloc(16, sizeof(scene_t));
     game->scene_count = 0;
@@ -2391,12 +2332,12 @@ void G_Add_Scene(game_t *game, const char *name) {
   game->scene_count++;
 }
 
-void G_Add_Scene_QC(qcvm_t *qcvm) {
+void G_Scene_Create_QC(qcvm_t *qcvm) {
   const char *scene_name = qcvm_get_parm_string(qcvm, 0);
 
   game_t *game = qcvm_get_user_data(qcvm);
 
-  G_Add_Scene(game, scene_name);
+  G_Scene_Create(game, scene_name);
 }
 
 scene_t *G_Get_Scene_By_Name(game_t *game, const char *name) {
@@ -2549,13 +2490,13 @@ void G_Add_Listener_QC(qcvm_t *qcvm) {
   G_Add_Listener(qcvm_get_user_data(qcvm), listener_type, attachment, func_id);
 }
 
-void G_Get_Camera_Position_QC(qcvm_t *qcvm) {
+void G_Camera_GetPosition_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
   qcvm_return_vector(qcvm, game->state.fps.pos[0], game->state.fps.pos[1],
                      game->state.fps.pos[2]);
 }
 
-void G_Set_Camera_Position_QC(qcvm_t *qcvm) {
+void G_Camera_SetPosition_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
 
   qcvm_vec3_t vec = qcvm_get_parm_vector(qcvm, 0);
@@ -2565,13 +2506,13 @@ void G_Set_Camera_Position_QC(qcvm_t *qcvm) {
   game->state.fps.pos[2] = vec.z;
 }
 
-void G_Get_Camera_Zoom_QC(qcvm_t *qcvm) {
+void G_Camera_GetZoom_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
 
   qcvm_return_float(qcvm, game->state.fps.zoom);
 }
 
-void G_Set_Camera_Zoom_QC(qcvm_t *qcvm) {
+void G_Camera_SetZoom_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
 
   game->state.fps.zoom = qcvm_get_parm_float(qcvm, 0);
@@ -2579,7 +2520,7 @@ void G_Set_Camera_Zoom_QC(qcvm_t *qcvm) {
   // printf("game->state.fps.zoom = %f\n", game->state.fps.zoom);
 }
 
-void G_Get_Axis_QC(qcvm_t *qcvm) {
+void G_Input_GetAxisValue_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
   const char *axis = qcvm_get_parm_string(qcvm, 0);
 
@@ -2592,13 +2533,13 @@ void G_Get_Axis_QC(qcvm_t *qcvm) {
   }
 }
 
-void G_Get_Mouse_Position_QC(qcvm_t *qcvm) {
+void G_Input_GetMousePosition_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
   qcvm_return_vector(qcvm, CL_GetInput(game->client)->mouse_x,
                      CL_GetInput(game->client)->mouse_y, 0.0f);
 }
 
-void G_Get_Screen_Size_QC(qcvm_t *qcvm) {
+void G_Screen_GetSize_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
   unsigned w, h;
   CL_GetViewDim(game->client, &w, &h);
@@ -2696,39 +2637,27 @@ void G_QCVMInstall(qcvm_t *qcvm) {
       .argc = 0,
   };
 
-  qcvm_export_t export_G_Add_Scene = {
-      .func = G_Add_Scene_QC,
-      .name = "G_Add_Scene",
+  qcvm_export_t export_G_Scene_Create = {
+      .func = G_Scene_Create_QC,
+      .name = "G_Scene_Create",
       .argc = 1,
       .args[0] = {.name = "s", .type = QCVM_STRING},
   };
 
-  qcvm_export_t export_G_Run_Scene = {
-      .func = G_Run_Scene_QC,
-      .name = "G_Run_Scene",
+  qcvm_export_t export_G_Scene_Run = {
+      .func = G_Scene_Run_QC,
+      .name = "G_Scene_Run",
       .argc = 1,
       .args[0] = {.name = "s", .type = QCVM_STRING},
   };
 
-  qcvm_export_t export_G_Create_Map = {
-      .func = G_Create_Map_QC,
-      .name = "G_Create_Map",
+  qcvm_export_t export_G_Map_Create = {
+      .func = G_Map_Create_QC,
+      .name = "G_Map_Create",
       .argc = 2,
       .args[0] = {.name = "w", .type = QCVM_FLOAT},
       .args[1] = {.name = "h", .type = QCVM_FLOAT},
       .type = QCVM_INT,
-  };
-
-  qcvm_export_t export_G_Add_Wall = {
-      .func = G_Add_Wall_QC,
-      .name = "G_Add_Wall",
-      .argc = 6,
-      .args[0] = {.name = "recipe", .type = QCVM_STRING},
-      .args[1] = {.name = "x", .type = QCVM_FLOAT},
-      .args[2] = {.name = "y", .type = QCVM_FLOAT},
-      .args[3] = {.name = "health", .type = QCVM_FLOAT},
-      .args[4] = {.name = "to_build", .type = QCVM_INT},
-      .args[5] = {.name = "map", .type = QCVM_INT},
   };
 
   qcvm_export_t export_G_Add_Listener = {
@@ -2752,60 +2681,60 @@ void G_QCVMInstall(qcvm_t *qcvm) {
       .args[5] = {.name = "z", .type = QCVM_FLOAT},
   };
 
-  qcvm_export_t export_G_Set_Current_Map = {
-      .func = G_Set_Current_Map_QC,
-      .name = "G_Set_Current_Map",
+  qcvm_export_t export_G_Scene_SetCurrentMap = {
+      .func = G_Scene_SetCurrentMap_QC,
+      .name = "G_Scene_SetCurrentMap",
       .argc = 2,
       .args[0] = {.name = "scene", .type = QCVM_STRING},
       .args[1] = {.name = "map", .type = QCVM_INT},
   };
 
-  qcvm_export_t export_G_Get_Camera_Position = {
-      .func = G_Get_Camera_Position_QC,
-      .name = "G_Get_Camera_Position",
+  qcvm_export_t export_G_Camera_GetPosition = {
+      .func = G_Camera_GetPosition_QC,
+      .name = "G_Camera_GetPosition",
       .argc = 0,
       .type = QCVM_VECTOR,
   };
 
-  qcvm_export_t export_G_Set_Camera_Position = {
-      .func = G_Set_Camera_Position_QC,
-      .name = "G_Set_Camera_Position",
+  qcvm_export_t export_G_Camera_SetPosition = {
+      .func = G_Camera_SetPosition_QC,
+      .name = "G_Camera_SetPosition",
       .argc = 1,
       .args[0] = {.name = "value", .type = QCVM_VECTOR},
   };
 
-  qcvm_export_t export_G_Get_Camera_Zoom = {
-      .func = G_Get_Camera_Zoom_QC,
-      .name = "G_Get_Camera_Zoom",
+  qcvm_export_t export_G_Camera_GetZoom = {
+      .func = G_Camera_GetZoom_QC,
+      .name = "G_Camera_GetZoom",
       .argc = 1,
       .type = QCVM_FLOAT,
   };
 
-  qcvm_export_t export_G_Set_Camera_Zoom = {
-      .func = G_Set_Camera_Zoom_QC,
-      .name = "G_Set_Camera_Zoom",
+  qcvm_export_t export_G_Camera_SetZoom = {
+      .func = G_Camera_SetZoom_QC,
+      .name = "G_Camera_SetZoom",
       .argc = 1,
       .args[0] = {.name = "value", .type = QCVM_FLOAT},
   };
 
-  qcvm_export_t export_G_Get_Axis = {
-      .func = G_Get_Axis_QC,
-      .name = "G_Get_Axis",
+  qcvm_export_t export_G_Input_GetAxisValue = {
+      .func = G_Input_GetAxisValue_QC,
+      .name = "G_Input_GetAxisValue",
       .argc = 1,
       .args[0] = {.name = "axis", .type = QCVM_STRING},
       .type = QCVM_FLOAT,
   };
 
-  qcvm_export_t export_G_Get_Mouse_Position = {
-      .func = G_Get_Mouse_Position_QC,
-      .name = "G_Get_Mouse_Position",
+  qcvm_export_t export_G_Input_GetMousePosition = {
+      .func = G_Input_GetMousePosition_QC,
+      .name = "G_Input_GetMousePosition",
       .argc = 0,
       .type = QCVM_VECTOR,
   };
 
-  qcvm_export_t export_G_Get_Screen_Size = {
-      .func = G_Get_Screen_Size_QC,
-      .name = "G_Get_Screen_Size",
+  qcvm_export_t export_G_Screen_GetSize = {
+      .func = G_Screen_GetSize_QC,
+      .name = "G_Screen_GetSize",
       .argc = 0,
       .type = QCVM_VECTOR,
   };
@@ -2927,20 +2856,19 @@ void G_QCVMInstall(qcvm_t *qcvm) {
   qcvm_add_export(qcvm, &export_G_Add_Recipes);
   qcvm_add_export(qcvm, &export_G_Load_Game);
   qcvm_add_export(qcvm, &export_G_Get_Last_Asset_Loaded);
-  qcvm_add_export(qcvm, &export_G_Add_Scene);
-  qcvm_add_export(qcvm, &export_G_Run_Scene);
-  qcvm_add_export(qcvm, &export_G_Create_Map);
-  qcvm_add_export(qcvm, &export_G_Add_Wall);
+  qcvm_add_export(qcvm, &export_G_Scene_Create);
+  qcvm_add_export(qcvm, &export_G_Scene_Run);
+  qcvm_add_export(qcvm, &export_G_Map_Create);
   qcvm_add_export(qcvm, &export_G_Add_Listener);
   qcvm_add_export(qcvm, &export_G_Draw_Image_Relative);
-  qcvm_add_export(qcvm, &export_G_Set_Current_Map);
-  qcvm_add_export(qcvm, &export_G_Get_Camera_Position);
-  qcvm_add_export(qcvm, &export_G_Set_Camera_Position);
-  qcvm_add_export(qcvm, &export_G_Get_Camera_Zoom);
-  qcvm_add_export(qcvm, &export_G_Set_Camera_Zoom);
-  qcvm_add_export(qcvm, &export_G_Get_Axis);
-  qcvm_add_export(qcvm, &export_G_Get_Mouse_Position);
-  qcvm_add_export(qcvm, &export_G_Get_Screen_Size);
+  qcvm_add_export(qcvm, &export_G_Scene_SetCurrentMap);
+  qcvm_add_export(qcvm, &export_G_Camera_GetPosition);
+  qcvm_add_export(qcvm, &export_G_Camera_SetPosition);
+  qcvm_add_export(qcvm, &export_G_Camera_GetZoom);
+  qcvm_add_export(qcvm, &export_G_Camera_SetZoom);
+  qcvm_add_export(qcvm, &export_G_Input_GetAxisValue);
+  qcvm_add_export(qcvm, &export_G_Input_GetMousePosition);
+  qcvm_add_export(qcvm, &export_G_Screen_GetSize);
   qcvm_add_export(qcvm, &export_G_Item_AddAmount);
   qcvm_add_export(qcvm, &export_G_Item_RemoveAmount);
   qcvm_add_export(qcvm, &export_G_Item_GetAmount);

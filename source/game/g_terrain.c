@@ -53,7 +53,7 @@ void G_Rectangle(ivec2 start, ivec2 end, int *indices, int *count) {
   }
 }
 
-void G_Map_Set_Terrain_Type_QC(qcvm_t *qcvm) {
+void G_Map_SetTerrainType_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
 
   int map = qcvm_get_parm_int(qcvm, 0);
@@ -62,7 +62,7 @@ void G_Map_Set_Terrain_Type_QC(qcvm_t *qcvm) {
   const char *recipe = qcvm_get_parm_string(qcvm, 3);
 
   if (map < 0 || map >= (int)game->map_count) {
-    printf("[ERROR] Assertion G_Map_Set_Terrain_Type(map >= 0 || map < "
+    printf("[ERROR] Assertion G_Map_SetTerrainType(map >= 0 || map < "
            "game->map_count) "
            "[map = %d, map_count = %d] should be "
            "verified.\n",
@@ -73,7 +73,7 @@ void G_Map_Set_Terrain_Type_QC(qcvm_t *qcvm) {
   map_t *the_map = &game->maps[map];
 
   if (x < 0.0f || x >= the_map->w) {
-    printf("[ERROR] Assertion G_Map_Set_Terrain_Type(x >= 0 || x < "
+    printf("[ERROR] Assertion G_Map_SetTerrainType(x >= 0 || x < "
            "map->w) "
            "[x = %d, map->w = %d] should be "
            "verified.\n",
@@ -82,7 +82,7 @@ void G_Map_Set_Terrain_Type_QC(qcvm_t *qcvm) {
   }
 
   if (y < 0.0f || y >= the_map->h) {
-    printf("[ERROR] Assertion G_Map_Set_Terrain_Type(y >= 0 || y < "
+    printf("[ERROR] Assertion G_Map_SetTerrainType(y >= 0 || y < "
            "map->y) "
            "[y = %d, map->h = %d] should be "
            "verified.\n",
@@ -94,7 +94,7 @@ void G_Map_Set_Terrain_Type_QC(qcvm_t *qcvm) {
   terrain_t *the_recipe = G_Terrains_get(&game->terrain_bank, key);
 
   if (!the_recipe) {
-    printf("[ERROR] Assertion G_Map_Set_Terrain_Type(recipe exists) [recipe = "
+    printf("[ERROR] Assertion G_Map_SetTerrainType(recipe exists) [recipe = "
            "\"%s\"] "
            "should be verified.\n",
            recipe);
@@ -117,7 +117,7 @@ void G_Map_Set_Terrain_Type_QC(qcvm_t *qcvm) {
   // the_map->gpu_tiles[idx].texture);
 }
 
-void G_Map_Get_Terrain_Type_QC(qcvm_t *qcvm) {
+void G_Map_GetTerrainType_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
 
   int map = qcvm_get_parm_int(qcvm, 0);
@@ -125,7 +125,7 @@ void G_Map_Get_Terrain_Type_QC(qcvm_t *qcvm) {
   float y = qcvm_get_parm_float(qcvm, 2);
 
   if (map < 0 || map >= (int)game->map_count) {
-    printf("[ERROR] Assertion G_Map_Set_Terrain_Type(map >= 0 || map < "
+    printf("[ERROR] Assertion G_Map_GetTerrainType_QC(map >= 0 || map < "
            "game->map_count) "
            "[map = %d, map_count = %d] should be "
            "verified.\n",
@@ -136,7 +136,7 @@ void G_Map_Get_Terrain_Type_QC(qcvm_t *qcvm) {
   map_t *the_map = &game->maps[map];
 
   if (x < 0.0f || x >= the_map->w) {
-    printf("[ERROR] Assertion G_Map_Set_Terrain_Type(x >= 0 || x < "
+    printf("[ERROR] Assertion G_Map_GetTerrainType_QC(x >= 0 || x < "
            "map->w) "
            "[x = %d, map->w = %d] should be "
            "verified.\n",
@@ -145,7 +145,7 @@ void G_Map_Get_Terrain_Type_QC(qcvm_t *qcvm) {
   }
 
   if (y < 0.0f || y >= the_map->h) {
-    printf("[ERROR] Assertion G_Map_Set_Terrain_Type(y >= 0 || y < "
+    printf("[ERROR] Assertion G_Map_GetTerrainType_QC(y >= 0 || y < "
            "map->y) "
            "[y = %d, map->h = %d] should be "
            "verified.\n",
@@ -158,30 +158,6 @@ void G_Map_Get_Terrain_Type_QC(qcvm_t *qcvm) {
   zpl_unused(idx);
 
   qcvm_return_string(qcvm, "about_to_be_done");
-}
-
-void G_TerrainInstall(qcvm_t *qcvm) {
-  qcvm_export_t export_G_Map_Set_Terrain_Type = {
-      .func = G_Map_Set_Terrain_Type_QC,
-      .name = "G_Map_Set_Terrain_Type",
-      .argc = 4,
-      .args[0] = {.name = "map", .type = QCVM_INT},
-      .args[1] = {.name = "x", .type = QCVM_FLOAT},
-      .args[2] = {.name = "y", .type = QCVM_FLOAT},
-      .args[3] = {.name = "recipe", .type = QCVM_STRING},
-  };
-
-  qcvm_export_t export_G_Map_Get_Terrain_Type = {
-      .func = G_Map_Get_Terrain_Type_QC,
-      .name = "G_Map_Get_Terrain_Type",
-      .argc = 3,
-      .args[0] = {.name = "map", .type = QCVM_INT},
-      .args[1] = {.name = "x", .type = QCVM_FLOAT},
-      .args[2] = {.name = "y", .type = QCVM_FLOAT},
-  };
-
-  qcvm_add_export(qcvm, &export_G_Map_Set_Terrain_Type);
-  qcvm_add_export(qcvm, &export_G_Map_Get_Terrain_Type);
 }
 
 static inline int imin(unsigned a, unsigned b) {
@@ -271,8 +247,8 @@ unsigned G_ComputeWallOrientation(map_t *map, wall_t *wall, int instance_x,
   }
 }
 
-void G_Add_Wall(game_t *game, int map, int x, int y, float health,
-                wall_t *wall_recipe) {
+void G_Map_AddWall(game_t *game, int map, int x, int y, float health,
+                   wall_t *wall_recipe) {
   // Since JPS isn't multithread friendly, we maintain a copy in each worker. It
   // forces us to lock and make the modification multiple times. We lock them
   // all to be sure there is not bad surprise.
@@ -308,4 +284,100 @@ void G_Add_Wall(game_t *game, int map, int x, int y, float health,
   }
 
   zpl_mutex_unlock(&game->maps[map].mutex);
+}
+
+void G_Map_AddWall_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+  const char *recipe = qcvm_get_parm_string(qcvm, 0);
+  float x = qcvm_get_parm_float(qcvm, 1);
+  float y = qcvm_get_parm_float(qcvm, 2);
+
+  float health = qcvm_get_parm_float(qcvm, 3);
+  bool to_build = qcvm_get_parm_int(qcvm, 4); // Ignored for the time being
+  int map = qcvm_get_parm_int(qcvm, 4);
+  zpl_unused(to_build);
+
+  if (health <= 0.0f) {
+    printf("[ERROR] Assertion G_Map_AddWall_QC(health > 0.0) [health = %f] should "
+           "be verified.\n",
+           health);
+    return;
+  }
+
+  if (map < 0 || map >= (int)game->map_count) {
+    printf("[ERROR] Assertion G_Map_AddWall_QC(map >= 0 || map < game->map_count) "
+           "[map = %d, map_count = %d] should be "
+           "verified.\n",
+           map, game->map_count);
+    return;
+  }
+
+  map_t *the_map = &game->maps[map];
+
+  zpl_u64 key = zpl_fnv64(recipe, strlen(recipe));
+  wall_t *the_wall = G_Walls_get(&game->wall_bank, key);
+
+  if (!the_wall) {
+    printf("[ERROR] Assertion G_Map_AddWall_QC(recipe exists) [recipe = \"%s\"] "
+           "should be verified.\n",
+           recipe);
+    return;
+  }
+
+  if (x < 0.0f || x >= the_map->w) {
+    printf("[ERROR] Assertion G_Map_AddWall_QC(x >= 0 || x < "
+           "map->w) "
+           "[x = %d, map->w = %d] should be "
+           "verified.\n",
+           (unsigned)x, the_map->w);
+    return;
+  }
+
+  if (y < 0.0f || y >= the_map->h) {
+    printf("[ERROR] Assertion G_Map_AddWall_QC(y >= 0 || y < "
+           "map->h) "
+           "[y = %d, map->h = %d] should be "
+           "verified.\n",
+           (unsigned)x, the_map->h);
+    return;
+  }
+
+  G_Map_AddWall(game, map, x, y, health, the_wall);
+}
+
+void G_TerrainInstall(qcvm_t *qcvm) {
+  qcvm_export_t export_G_Map_SetTerrainType = {
+      .func = G_Map_SetTerrainType_QC,
+      .name = "G_Map_SetTerrainType",
+      .argc = 4,
+      .args[0] = {.name = "map", .type = QCVM_INT},
+      .args[1] = {.name = "x", .type = QCVM_FLOAT},
+      .args[2] = {.name = "y", .type = QCVM_FLOAT},
+      .args[3] = {.name = "recipe", .type = QCVM_STRING},
+  };
+
+  qcvm_export_t export_G_Map_GetTerrainType = {
+      .func = G_Map_GetTerrainType_QC,
+      .name = "G_Map_GetTerrainType",
+      .argc = 3,
+      .args[0] = {.name = "map", .type = QCVM_INT},
+      .args[1] = {.name = "x", .type = QCVM_FLOAT},
+      .args[2] = {.name = "y", .type = QCVM_FLOAT},
+  };
+
+  qcvm_export_t export_G_Map_AddWall = {
+      .func = G_Map_AddWall_QC,
+      .name = "G_Map_AddWall",
+      .argc = 6,
+      .args[0] = {.name = "recipe", .type = QCVM_STRING},
+      .args[1] = {.name = "x", .type = QCVM_FLOAT},
+      .args[2] = {.name = "y", .type = QCVM_FLOAT},
+      .args[3] = {.name = "health", .type = QCVM_FLOAT},
+      .args[4] = {.name = "to_build", .type = QCVM_INT},
+      .args[5] = {.name = "map", .type = QCVM_INT},
+  };
+
+  qcvm_add_export(qcvm, &export_G_Map_SetTerrainType);
+  qcvm_add_export(qcvm, &export_G_Map_GetTerrainType);
+  qcvm_add_export(qcvm, &export_G_Map_AddWall);
 }
