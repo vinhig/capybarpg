@@ -169,6 +169,7 @@ exe = executable('maidenless',
   'external/vk_mem_alloc.cpp',
   'external/stbi_image.c',
   'external/stbi_image_write.c',
+  'external/minini/minIni.c',
 
   'external/jps.c',
   'external/heap.c',

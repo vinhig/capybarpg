@@ -30,7 +30,7 @@ typedef enum agent_type_t {
 } agent_type_t;
 
 typedef struct short_string_t {
-  char str[64];
+  char str[128];
 } short_string_t;
 
 typedef struct game_immediate_draw_t {

@@ -1,8 +1,10 @@
 #include "cimgui.h"
 #include "client/cl_client.h"
+#include "minini/minIni.h"
 #include <cglm/mat4.h>
 #include <cglm/util.h>
 #include <client/cl_input.h>
+#include <errno.h>
 #include <float.h>
 #include <freetype/freetype.h>
 #include <game/g_game.h>
@@ -89,6 +91,7 @@ game_t *G_CreateGame(client_t *client, char *base) {
 
   G_Floats_init(&game->global_variable_floats, zpl_heap_allocator());
   G_Strings_init(&game->global_variable_strings, zpl_heap_allocator());
+  G_Strings_init(&game->global_variable_keys, zpl_heap_allocator());
   G_Integers_init(&game->global_variable_ints, zpl_heap_allocator());
 
   // Two freetype library because font loading may happen on different threads
@@ -3019,4 +3022,78 @@ character_t *G_GetCharacter(game_t *game, const char *family, wchar_t c) {
   }
 
   return NULL;
+}
+
+void G_LoadGlobalVariables(game_t *game, const char *config_file) {
+  char section[64];
+  char str[64];
+
+  char value[64];
+
+  char the_key[128];
+
+  char *endptr = NULL;
+
+  for (unsigned s = 0; ini_getsection(s, section, sizeof(section), config_file) > 0; s++) {
+    for (unsigned k = 0; ini_getkey(section, k, str, sizeof(section), config_file) > 0; k++) {
+      sprintf(&the_key[0], "%s$%s", section, str);
+
+      zpl_u64 key = zpl_fnv64(the_key, strlen(the_key));
+
+      ini_gets(section, str, "", value, sizeof(value), config_file);
+
+      errno = 0;
+
+      long integer = strtol(value, &endptr, 10);
+
+      if (errno == 0 && !*endptr) {
+        // it's an integer!
+        G_Integers_set(&game->global_variable_ints, key, integer);
+      } else {
+        errno = 0;
+
+        float number = strtof(value, &endptr);
+
+        if (errno == 0 && !*endptr) {
+          // it's a float!
+          G_Floats_set(&game->global_variable_floats, key, number);
+        } else {
+          // probably a string
+          short_string_t short_str;
+          strcpy(short_str.str, value);
+          G_Strings_set(&game->global_variable_strings, key, short_str);
+        }
+      }
+
+      short_string_t str_key;
+      strcpy(&str_key.str[0], the_key);
+      G_Strings_set(&game->global_variable_keys, key, str_key);
+    }
+  }
+}
+
+void G_DumpGlobalVariables(game_t *game, const char *prefix, const char *config_file) {
+  for (unsigned i = 0; i < zpl_array_count(game->global_variable_floats.entries); i++) {
+    short_string_t *str_key = G_Strings_get(&game->global_variable_keys, game->global_variable_floats.entries[i].key);
+
+    if (strncmp(str_key->str, prefix, strlen(prefix)) == 0) {
+      ini_putf(prefix, &str_key->str[0] + strlen(prefix) + 1, game->global_variable_floats.entries[i].value, config_file);
+    }
+  }
+
+  for (unsigned i = 0; i < zpl_array_count(game->global_variable_strings.entries); i++) {
+    short_string_t *str_key = G_Strings_get(&game->global_variable_keys, game->global_variable_strings.entries[i].key);
+
+    if (strncmp(str_key->str, prefix, strlen(prefix)) == 0) {
+      ini_puts(prefix, &str_key->str[0] + strlen(prefix) + 1, game->global_variable_strings.entries[i].value.str, config_file);
+    }
+  }
+
+  for (unsigned i = 0; i < zpl_array_count(game->global_variable_ints.entries); i++) {
+    short_string_t *str_key = G_Strings_get(&game->global_variable_keys, game->global_variable_ints.entries[i].key);
+
+    if (strncmp(str_key->str, prefix, strlen(prefix)) == 0) {
+      ini_putl(prefix, &str_key->str[0] + strlen(prefix) + 1, game->global_variable_ints.entries[i].value, config_file);
+    }
+  }
 }

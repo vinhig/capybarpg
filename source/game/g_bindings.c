@@ -32,6 +32,10 @@ void C_Global_SetFloat_QC(qcvm_t *qcvm) {
   zpl_u64 key = zpl_fnv64(name, strlen(name));
 
   G_Floats_set(&game->global_variable_floats, key, value);
+
+  short_string_t str_key;
+  strcpy(&str_key.str[0], name);
+  G_Strings_set(&game->global_variable_keys, key, str_key);
 }
 
 void C_Global_GetFloat_QC(qcvm_t *qcvm) {
@@ -66,6 +70,10 @@ void C_Global_SetInteger_QC(qcvm_t *qcvm) {
   zpl_u64 key = zpl_fnv64(name, strlen(name));
 
   G_Integers_set(&game->global_variable_ints, key, value);
+
+  short_string_t str_key;
+  strcpy(&str_key.str[0], name);
+  G_Strings_set(&game->global_variable_keys, key, str_key);
 }
 
 void C_Global_GetInteger_QC(qcvm_t *qcvm) {
@@ -103,6 +111,10 @@ void C_Global_SetString_QC(qcvm_t *qcvm) {
   strcpy(str.str, string);
 
   G_Strings_set(&game->global_variable_strings, key, str);
+
+  short_string_t str_key;
+  strcpy(&str_key.str[0], name);
+  G_Strings_set(&game->global_variable_keys, key, str_key);
 }
 
 void C_Global_GetString_QC(qcvm_t *qcvm) {
@@ -114,6 +126,19 @@ void C_Global_GetString_QC(qcvm_t *qcvm) {
   const char *yo = &G_Strings_get(&game->global_variable_strings, key)->str[0];
 
   qcvm_return_string(qcvm, yo);
+}
+
+void C_LoadGlobalVariables_QC(qcvm_t *qcvm) {
+  const char *config_file = qcvm_get_parm_string(qcvm, 0);
+
+  G_LoadGlobalVariables(qcvm_get_user_data(qcvm), config_file);
+}
+
+void C_DumpGlobalVariables_QC(qcvm_t *qcvm) {
+  const char *prefix = qcvm_get_parm_string(qcvm, 0);
+  const char *config_file = qcvm_get_parm_string(qcvm, 1);
+
+  G_DumpGlobalVariables(qcvm_get_user_data(qcvm), prefix, config_file);
 }
 
 void G_CommonInstall(qcvm_t *qcvm) {
@@ -196,6 +221,21 @@ void G_CommonInstall(qcvm_t *qcvm) {
       .args[1] = {.name = "value", .type = QCVM_STRING},
   };
 
+  qcvm_export_t export_C_DumpGlobalVariables = {
+      .func = C_DumpGlobalVariables_QC,
+      .name = "C_DumpGlobalVariables",
+      .argc = 2,
+      .args[0] = {.name = "prefix", .type = QCVM_STRING},
+      .args[1] = {.name = "config_file", .type = QCVM_STRING},
+  };
+
+  qcvm_export_t export_C_LoadGlobalVariables = {
+      .func = C_LoadGlobalVariables_QC,
+      .name = "C_LoadGlobalVariables",
+      .argc = 1,
+      .args[0] = {.name = "config_file", .type = QCVM_STRING},
+  };
+
   qcvm_add_export(qcvm, &export_C_Rand);
 
   qcvm_add_export(qcvm, &export_C_Global_HasFloat);
@@ -209,4 +249,7 @@ void G_CommonInstall(qcvm_t *qcvm) {
   qcvm_add_export(qcvm, &export_C_Global_HasString);
   qcvm_add_export(qcvm, &export_C_Global_GetString);
   qcvm_add_export(qcvm, &export_C_Global_SetString);
+
+  qcvm_add_export(qcvm, &export_C_LoadGlobalVariables);
+  qcvm_add_export(qcvm, &export_C_DumpGlobalVariables);
 }

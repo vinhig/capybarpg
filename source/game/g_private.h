@@ -217,6 +217,7 @@ struct game_t {
   char current_ui_style[32];
 
   string_dict_t global_variable_strings;
+  string_dict_t global_variable_keys; // save the string key (used when writing config file that are a dump of certain global variables)
   float_dict_t global_variable_floats;
   int_dict_t global_variable_ints;
 
@@ -236,4 +237,7 @@ void G_CommonInstall(qcvm_t *qcvm);
 void G_TerrainInstall(qcvm_t *qcvm);
 void G_Add_Wall(game_t *game, int map, int x, int y, float health,
                 wall_t *wall_recipe);
-void G_UIInstall(qcvm_t* qcvm);
+void G_UIInstall(qcvm_t *qcvm);
+
+void G_DumpGlobalVariables(game_t *game, const char *prefix, const char *config_file);
+void G_LoadGlobalVariables(game_t *game, const char *config_file);

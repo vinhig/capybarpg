@@ -52,8 +52,6 @@ void UI_Begin_Menu_QC(qcvm_t *qcvm) {
     ImGui_PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
     ImGui_Begin(style, NULL, flags);
     ImGui_PopStyleVar();
-
-    ImGui_Dummy((ImVec2){400.0f, 32.0f});
   } else {
     ImGui_Begin("don't care", NULL, flags);
   }

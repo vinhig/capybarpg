@@ -11,3 +11,4 @@ A big thanks to:
 - https://github.com/bitbank2/image_to_c
 - https://github.com/zpl-c/zpl
 - https://freetype.org/index.html
+- https://github.com/compuphase/minIni/
