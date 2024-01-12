@@ -87,6 +87,10 @@ game_t *G_CreateGame(client_t *client, char *base) {
   G_Terrains_init(&game->terrain_bank, zpl_heap_allocator());
   G_Pawns_init(&game->pawn_bank, zpl_heap_allocator());
 
+  G_Floats_init(&game->global_variable_floats, zpl_heap_allocator());
+  G_Strings_init(&game->global_variable_strings, zpl_heap_allocator());
+  G_Integers_init(&game->global_variable_ints, zpl_heap_allocator());
+
   // Two freetype library because font loading may happen on different threads
   if (FT_Init_FreeType(&game->console_ft)) {
     printf("[ERROR] Couldn't init freetype for the game.\n");
@@ -2294,7 +2298,7 @@ void G_Load_Game(game_t *game) {
   free(texture_jobs);
 
   printf("[VERBOSE] Loading game took `%f` ms\n",
-         (float)(zpl_time_rel() - now) *100);
+         (float)(zpl_time_rel() - now) * 100);
 
   CL_SetClientState(game->client, CLIENT_RUNNING);
 }
@@ -2926,6 +2930,7 @@ bool G_Load(client_t *client, game_t *game) {
 
     G_CommonInstall(game->qcvms[i]);
     G_TerrainInstall(game->qcvms[i]);
+    G_UIInstall(game->qcvms[i]);
 
     qcvm_set_user_data(game->qcvms[i], game);
   }

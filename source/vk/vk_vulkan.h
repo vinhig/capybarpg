@@ -65,6 +65,9 @@ void VK_UploadSingleTexture(vk_rend_t *rend, texture_t *texture);
 
 const char *VK_GetError();
 
-void VK_InitUI(client_t* client, vk_rend_t* rend);
-void VK_BeginUI(client_t* client);
-void VK_DestroyUI(vk_rend_t* rend);
+void VK_InitUI(client_t *client, vk_rend_t *rend);
+void VK_BeginUI(client_t *client);
+void VK_DestroyUI(vk_rend_t *rend);
+
+void VK_LoadFont(const char *path, const char *name);
+void *VK_GetFont(const char *name);

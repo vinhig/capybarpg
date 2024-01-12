@@ -158,6 +158,7 @@ exe = executable('maidenless',
   'source/game/g_bindings.c',
   'source/game/g_data.c',
   'source/game/g_terrain.c',
+  'source/game/g_ui.c',
 
   'source/vk/vk.c',
   'source/vk/vk_gbuffer.c',

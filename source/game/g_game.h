@@ -29,6 +29,10 @@ typedef enum agent_type_t {
   AGENT_FACTION6 = 1 << 8,
 } agent_type_t;
 
+typedef struct short_string_t {
+  char str[64];
+} short_string_t;
+
 typedef struct game_immediate_draw_t {
   float x, y, z;
   float w, h;

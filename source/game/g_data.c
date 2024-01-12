@@ -20,3 +20,11 @@ ZPL_TABLE_DEFINE(pawn_bank_t, G_Pawns_, pawn_t)
 ZPL_TABLE_DECLARE(extern, inventory_t, G_Inventory_, float)
 ZPL_TABLE_DEFINE(inventory_t, G_Inventory_, float)
 
+ZPL_TABLE_DECLARE(extern, string_dict_t, G_Strings_, short_string_t)
+ZPL_TABLE_DEFINE(string_dict_t, G_Strings_, short_string_t)
+
+ZPL_TABLE_DECLARE(extern, float_dict_t, G_Floats_, float)
+ZPL_TABLE_DEFINE(float_dict_t, G_Floats_, float)
+
+ZPL_TABLE_DECLARE(extern, int_dict_t, G_Integers_, int)
+ZPL_TABLE_DEFINE(int_dict_t, G_Integers_, int)

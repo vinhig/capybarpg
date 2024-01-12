@@ -11,6 +11,8 @@ typedef struct vk_rend_t vk_rend_t;
 typedef struct vk_system_t vk_system_t;
 typedef struct game_state_t game_state_t;
 
+struct ImFont;
+
 typedef struct vk_write_t {
   VkBuffer src;
   VkBuffer dst;
@@ -262,6 +264,9 @@ struct vk_rend_t {
 
   unsigned width;
   unsigned height;
+
+  struct ImFont *imgui_font_default;
+  struct ImFont *imgui_font_menu;
 };
 
 bool VK_InitGBuffer(vk_rend_t *rend);
@@ -269,7 +274,7 @@ void VK_DrawGBuffer(vk_rend_t *rend);
 void VK_DestroyGBuffer(vk_rend_t *rend);
 
 bool VK_InitImmediate(vk_rend_t *rend);
-void VK_DrawImmediate(client_t* client, vk_rend_t *rend, game_state_t *state);
+void VK_DrawImmediate(client_t *client, vk_rend_t *rend, game_state_t *state);
 void VK_DestroyImmediate(vk_rend_t *rend);
 
 void *CL_GetWindow(client_t *client);
