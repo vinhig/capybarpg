@@ -134,6 +134,19 @@ void VK_BeginUI(client_t *client) {
   ImGui_ImplVulkan_NewFrame();
   ImGui_ImplSDL2_NewFrame(static_cast<SDL_Window *>(CL_GetWindow(client)));
 
+  unsigned screen_width, screen_height;
+  unsigned view_width, view_height;
+
+  CL_GetViewDim(client, &screen_width, &screen_height);
+  CL_GetScreenDim(client, &view_width, &view_height);
+
+  float ratio_screen_view_x = ((float)screen_width / (float)view_width);
+  float ratio_screen_view_y = ((float)screen_height / (float)view_height);
+
+  auto &io = ImGui::GetIO();
+  io.DisplayFramebufferScale.x = ratio_screen_view_x;
+  io.DisplayFramebufferScale.y = ratio_screen_view_y;
+
   ImGui::NewFrame();
 }
 
@@ -143,7 +156,7 @@ void VK_DrawUI(vk_rend_t *rend, VkCommandBuffer cmd) {
   ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
 }
 
-void ImGui_ProcessEvent(SDL_Event *event) {
+void ImGui_ProcessEvent(client_t *client, SDL_Event *event) {
   ImGui_ImplSDL2_ProcessEvent(event);
 }
 

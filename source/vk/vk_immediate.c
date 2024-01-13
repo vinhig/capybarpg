@@ -154,8 +154,8 @@ bool VK_InitImmediate(vk_rend_t *rend) {
     };
 
     VkViewport viewport = {
-        .height = rend->height,
-        .width = rend->width,
+        .height = rend->view_height,
+        .width = rend->view_width,
         .x = 0,
         .y = 0,
         .minDepth = 0.0f,
@@ -165,8 +165,8 @@ bool VK_InitImmediate(vk_rend_t *rend) {
     VkRect2D scissor = {
         .extent =
             {
-                .height = rend->height,
-                .width = rend->width,
+                .height = rend->view_height,
+                .width = rend->view_width,
             },
         .offset =
             {
@@ -313,8 +313,8 @@ bool VK_InitImmediate(vk_rend_t *rend) {
     };
 
     VkViewport viewport = {
-        .height = rend->height,
-        .width = rend->width,
+        .height = rend->view_height,
+        .width = rend->view_width,
         .x = 0,
         .y = 0,
         .minDepth = 0.0f,
@@ -324,8 +324,8 @@ bool VK_InitImmediate(vk_rend_t *rend) {
     VkRect2D scissor = {
         .extent =
             {
-                .height = rend->height,
-                .width = rend->width,
+                .height = rend->view_height,
+                .width = rend->view_width,
             },
         .offset =
             {
@@ -453,7 +453,7 @@ void VK_DrawImmediate(client_t *client, vk_rend_t *rend, game_state_t *state) {
       .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
       .renderArea =
           {
-              .extent = {.width = rend->width, .height = rend->height},
+              .extent = {.width = rend->view_width, .height = rend->view_height},
               .offset = {.x = 0, .y = 0},
           },
       .layerCount = 1,

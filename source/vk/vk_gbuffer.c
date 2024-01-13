@@ -121,10 +121,10 @@ bool VK_InitGBuffer(vk_rend_t *rend) {
   rend->gbuffer = calloc(1, sizeof(vk_gbuffer_t));
 
   render_target_t albedo = VK_CreateRenderTarget(
-      rend, rend->width, rend->height, VK_FORMAT_R16G16B16A16_SFLOAT,
+      rend, rend->view_width, rend->view_height, VK_FORMAT_R16G16B16A16_SFLOAT,
       "render_target_albedo");
   render_target_t depth =
-      VK_CreateRenderTarget(rend, rend->width, rend->height,
+      VK_CreateRenderTarget(rend, rend->view_width, rend->view_height,
                             VK_FORMAT_D32_SFLOAT, "render_target_depth");
 
   rend->gbuffer->albedo_target = albedo;
@@ -222,8 +222,8 @@ bool VK_InitGBuffer(vk_rend_t *rend) {
     };
 
     VkViewport viewport = {
-        .height = rend->height,
-        .width = rend->width,
+        .height = rend->view_height,
+        .width = rend->view_width,
         .x = 0,
         .y = 0,
         .minDepth = 0.0f,
@@ -233,8 +233,8 @@ bool VK_InitGBuffer(vk_rend_t *rend) {
     VkRect2D scissor = {
         .extent =
             {
-                .height = rend->height,
-                .width = rend->width,
+                .height = rend->view_height,
+                .width = rend->view_width,
             },
         .offset =
             {
@@ -368,7 +368,7 @@ void VK_DrawGBuffer(vk_rend_t *rend) {
       .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
       .renderArea =
           {
-              .extent = {.width = rend->width, .height = rend->height},
+              .extent = {.width = rend->view_width, .height = rend->view_height},
               .offset = {.x = 0, .y = 0},
           },
       .layerCount = 1,

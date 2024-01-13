@@ -177,7 +177,8 @@ int UI_GetKeyFromName(string name) = #0;
 string UI_GetNameFromKey(int key) = #0;
 
 // exit the game, now!
-void UI_Quit() = #0;
+void C_Quit() = #0;
+void C_Restart() = #0;
 
 void C_LoadGlobalVariables(string config_file) = #0;
 void C_DumpGlobalVariables(string prefix, string config_file) = #0;

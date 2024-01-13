@@ -1,6 +1,7 @@
 #include "cl_client.h"
 #include "SDL_events.h"
 #include "SDL_keycode.h"
+#include "SDL_video.h"
 #include "cl_input.h"
 #include "vk/vk_vulkan.h"
 
@@ -9,12 +10,15 @@
 #include <minini/minIni.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <wchar.h>
 #include <zpl/zpl.h>
 
 #include <cimgui.h>
 
 #include "game/g_game.h"
+
+char *const *Global_Argv;
 
 ZPL_TABLE_DECLARE(extern, string_dict_t, CL_Strings_, short_string_t)
 ZPL_TABLE_DECLARE(extern, float_dict_t, CL_Floats_, float)
@@ -26,7 +30,8 @@ struct client_t {
 
   client_console_t *console;
 
-  unsigned v_width, v_height;
+  unsigned screen_width, screen_height;
+  unsigned view_width, view_height;
 
   vk_rend_t *rend;
 
@@ -38,16 +43,24 @@ struct client_t {
   int_dict_t global_variable_ints;
 };
 
+client_desc_t client_desc_default() {
+  return (client_desc_t){
+      .vsync = 2,
+      .fullscreen = 2,
+  };
+}
+
 void *CL_GetWindow(client_t *client) { return client->window; }
 
 input_t *CL_GetInput(client_t *client) { return &client->input; }
 
-void ImGui_ProcessEvent(SDL_Event *event);
+void ImGui_ProcessEvent(client_t *client, SDL_Event *event);
 
 bool CL_ParseClientDesc(client_desc_t *desc, int argc, char *argv[]) {
   // Arbitrary decision: in debug mode, a badly formed argument is fatal
   //                     in release mode, it's not
   // It's handled on the function call site (int main)
+  Global_Argv = argv;
   bool is_error = false;
   for (int i = 1; i < argc; i += 2) {
     char *arg = argv[i];
@@ -137,6 +150,41 @@ bool CL_ParseClientDesc(client_desc_t *desc, int argc, char *argv[]) {
   return is_error;
 }
 
+#define IF_NULL(type, var, value, default) \
+  type *check = value;                     \
+  if (check) {                             \
+    var = *check;                          \
+  } else {                                 \
+    var = default;                         \
+  }
+
+void CL_CompleteClientDesc(client_t *client, client_desc_t *desc) {
+  if (desc->width == 0) {
+    zpl_u64 key = zpl_fnv64("video$resolution_width", strlen("video$resolution_width"));
+    IF_NULL(int, desc->width, CL_Integers_get(&client->global_variable_ints, key), 1280)
+  }
+
+  if (desc->height == 0) {
+    zpl_u64 key = zpl_fnv64("video$resolution_height", strlen("video$resolution_height"));
+    IF_NULL(int, desc->height, CL_Integers_get(&client->global_variable_ints, key), 768)
+  }
+
+  if (desc->vsync == 2) {
+    zpl_u64 key = zpl_fnv64("video$vsync", strlen("video$vsync"));
+    IF_NULL(int, desc->vsync, CL_Integers_get(&client->global_variable_ints, key), 1)
+  }
+
+  if (desc->framerate == 0) {
+    zpl_u64 key = zpl_fnv64("video$framerate", strlen("video$framerate"));
+    IF_NULL(int, desc->framerate, CL_Integers_get(&client->global_variable_ints, key), 1)
+  }
+
+  if (desc->fullscreen == 2) {
+    zpl_u64 key = zpl_fnv64("video$fullscreen", strlen("video$fullscreen"));
+    IF_NULL(int, desc->fullscreen, CL_Integers_get(&client->global_variable_ints, key), 0)
+  }
+}
+
 client_t *CL_CreateClient(const char *title, client_desc_t *desc) {
   client_t *client = calloc(1, sizeof(client_t));
 
@@ -147,6 +195,8 @@ client_t *CL_CreateClient(const char *title, client_desc_t *desc) {
 
   CL_LoadGlobalVariables(client, "settings.ini");
 
+  CL_CompleteClientDesc(client, desc);
+
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_JOYSTICK) != 0) {
     printf("Failed to initialize SDL2.\n");
     return NULL;
@@ -154,33 +204,42 @@ client_t *CL_CreateClient(const char *title, client_desc_t *desc) {
 
   SDL_WindowFlags flags = SDL_WINDOW_VULKAN | SDL_WINDOW_SHOWN;
 
+  int window_pos_x = SDL_WINDOWPOS_CENTERED;
+  int window_pos_y = SDL_WINDOWPOS_CENTERED;
+
+  SDL_DisplayMode display_mode;
+  SDL_GetCurrentDisplayMode(0, &display_mode);
+  int screen_width = (int)desc->width;
+  int screen_height = (int)desc->height;
+
   if (desc->fullscreen) {
-    flags |= SDL_WINDOW_FULLSCREEN;
+    flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+    screen_width = display_mode.w;
+    screen_height = display_mode.h;
   }
 
   SDL_Window *window =
-      SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                       (int)desc->width, (int)desc->height, flags);
+      SDL_CreateWindow(title, window_pos_x, window_pos_y,
+                       screen_width, screen_height, flags);
 
   if (window == NULL) {
     printf("Failed to create a SDL2 window: %s\n", SDL_GetError());
     return NULL;
   }
 
-  int rend_count = SDL_GetNumRenderDrivers();
-
-  if (rend_count == 0) {
-    printf("Failed to find a suitable SDL2 renderer: %s\n", SDL_GetError());
-    SDL_DestroyWindow(window);
-    SDL_Quit();
-    return NULL;
-  }
-
   client->state = CLIENT_RUNNING;
   client->window = window;
 
+  client->view_width = desc->width;
+  client->screen_width = screen_width;
+  client->view_height = desc->height;
+  client->screen_height = screen_height;
+
   // TODO: the referenced GPU in the description should be passed
-  client->rend = VK_CreateRend(client, desc->width, desc->height);
+  client->rend = VK_CreateRend(client,
+                               desc->width, desc->height,
+                               screen_width, screen_height,
+                               desc->vsync, desc->framerate);
 
   if (client->rend == NULL) {
     printf("Failed to create a Vulkan renderer.\n");
@@ -188,9 +247,6 @@ client_t *CL_CreateClient(const char *title, client_desc_t *desc) {
     SDL_Quit();
     return NULL;
   }
-
-  client->v_width = desc->width;
-  client->v_height = desc->height;
 
   // SDL_SetRelativeMouseMode(true);
 
@@ -212,8 +268,13 @@ void CL_SetClientState(client_t *client, client_state_t state) { client->state =
 vk_rend_t *CL_GetRend(client_t *client) { return client->rend; }
 
 void CL_GetViewDim(client_t *client, unsigned *width, unsigned *height) {
-  *width = client->v_width;
-  *height = client->v_height;
+  *width = client->view_width;
+  *height = client->view_height;
+}
+
+void CL_GetScreenDim(client_t *client, unsigned *width, unsigned *height) {
+  *width = client->screen_width;
+  *height = client->screen_height;
 }
 
 void CL_UpdateClient(client_t *client) {
@@ -262,7 +323,7 @@ void CL_UpdateClient(client_t *client) {
     //   client->input.view.y_axis = 0.0;
 
     while (SDL_PollEvent(&event)) {
-      ImGui_ProcessEvent(&event);
+      ImGui_ProcessEvent(client, &event);
 
       if (event.type == SDL_QUIT) {
         client->state = CLIENT_QUITTING;
@@ -353,6 +414,17 @@ void CL_DrawClient(client_t *client, game_t *game, game_state_t *state) {
 }
 
 void CL_ExitClient(client_t *client) { client->state = CLIENT_QUITTING; }
+
+void CL_StartClient() {
+  execv(Global_Argv[0], Global_Argv);
+  printf("should restart here!\n");
+}
+
+void CL_RestartClient(client_t *client) {
+  client->state = CLIENT_QUITTING;
+
+  atexit(CL_StartClient);
+}
 
 void CL_DestroyClient(client_t *client) {
   CL_DestroyConsole(client, client->console);

@@ -15,7 +15,17 @@ typedef struct texture_t {
 
 typedef struct vk_model_t vk_model_t;
 
-vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height);
+/**
+ * @brief A vulkan renderer is created. There are two sets of width/height.
+ * The first one details the resolution at which the interal resolution of
+ * the renderer (the one at which it draws stuff). The second pair details the
+ * screen width/height (that can be different when rendering at 1280x768 at
+ * fullscreen on a 1920x1080 display for example).
+ */
+vk_rend_t *VK_CreateRend(client_t *client,
+                         unsigned view_width, unsigned view_height,
+                         unsigned screen_width, unsigned screen_height,
+                         bool vsync, unsigned framerate);
 
 void VK_Draw(client_t *client, vk_rend_t *rend, game_state_t *game);
 

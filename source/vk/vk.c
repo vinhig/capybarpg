@@ -10,10 +10,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "game/g_game.h"
-#include "vk_mem_alloc.h"
 #include <SDL2/SDL_vulkan.h>
+#include <game/g_game.h>
+#include <vk_mem_alloc.h>
 #include <vulkan/vulkan_core.h>
+#include <zpl/zpl.h>
 
 static unsigned error_count = 0;
 
@@ -234,12 +235,26 @@ VkShaderModule VK_LoadShaderModule(vk_rend_t *rend, const char *path) {
   return module;
 }
 
-vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
+vk_rend_t *VK_CreateRend(client_t *client,
+                         unsigned view_width, unsigned view_height,
+                         unsigned screen_width, unsigned screen_height,
+                         bool vsync, unsigned framerate) {
   vk_rend_t *rend = calloc(1, sizeof(vk_rend_t));
 
-  rend->width = width;
-  rend->height = height;
+  rend->view_width = view_width;
+  rend->view_height = view_height;
+
+  rend->screen_width = screen_width;
+  rend->screen_height = screen_height;
+
   rend->current_frame = 0;
+
+  rend->framerate = framerate;
+  rend->vsync = vsync;
+
+  if (framerate != 0) {
+    rend->present_interval = 1.0 / (float)framerate;
+  }
 
   // INSTANCE CREATION
   {
@@ -565,9 +580,14 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
   // Create swapchain and corresponding images
   {
     VkExtent2D image_extent = {
-        .width = width,
-        .height = height,
+        .width = screen_width,
+        .height = screen_height,
     };
+
+    VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
+    if (!rend->vsync) {
+      present_mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+    }
 
     VkSwapchainCreateInfoKHR swapchain_info = {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
@@ -582,7 +602,7 @@ vk_rend_t *VK_CreateRend(client_t *client, unsigned width, unsigned height) {
                       VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
         .preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
         .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-        .presentMode = VK_PRESENT_MODE_FIFO_KHR,
+        .presentMode = present_mode,
         .clipped = VK_TRUE,
         .oldSwapchain = VK_NULL_HANDLE};
 
@@ -1025,6 +1045,20 @@ void VK_Present(vk_rend_t *rend, unsigned image_index) {
 
   vkQueuePresentKHR(rend->graphics_queue, &present_info);
   rend->current_frame++;
+
+  if (!rend->vsync) {
+    zpl_f64 now = zpl_time_rel();
+    zpl_f64 elapsed = now - rend->last_present;
+
+    // wait
+    zpl_f64 to_sleep = rend->present_interval - elapsed;
+
+    if (to_sleep > 0.0f) {
+      zpl_sleep(to_sleep);
+    }
+
+    rend->last_present = zpl_time_rel();
+  }
 }
 
 void VK_Draw(client_t *client, vk_rend_t *rend, game_state_t *game) {
@@ -1084,8 +1118,8 @@ void VK_Draw(client_t *client, vk_rend_t *rend, game_state_t *game) {
   rend->global_ubo.max_depth = max_depth;
   memcpy(&rend->global_ubo, &game->fps, sizeof(game->fps));
 
-  rend->global_ubo.view_dim[0] = rend->width;
-  rend->global_ubo.view_dim[1] = rend->height;
+  rend->global_ubo.view_dim[0] = rend->view_width;
+  rend->global_ubo.view_dim[1] = rend->view_height;
   rend->global_ubo.entity_count = rend->ecs->entity_count;
 
   void *data;
@@ -1168,20 +1202,20 @@ void VK_Draw(client_t *client, vk_rend_t *rend, game_state_t *game) {
   VkImageBlit blit_region = {
       .srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
       .srcSubresource.layerCount = 1,
-      .srcOffsets[1].x = rend->width,
-      .srcOffsets[1].y = rend->height,
+      .srcOffsets[1].x = rend->view_width,
+      .srcOffsets[1].y = rend->view_height,
       .srcOffsets[1].z = 1,
       .dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
       .dstSubresource.layerCount = 1,
-      .dstOffsets[1].x = rend->width,
-      .dstOffsets[1].y = rend->height,
-      .dstOffsets[1].z = 1,
+      .dstOffsets[1].x = rend->screen_width,
+      .dstOffsets[1].y = rend->screen_height,
+      .dstOffsets[1].z = 1, // should this be [0] ???
   };
 
   vkCmdBlitImage(
       cmd, rend->gbuffer->albedo_target.image,
       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, rend->swapchain_images[image_index],
-      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit_region, VK_FILTER_NEAREST);
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit_region, VK_FILTER_LINEAR);
 
   {
     VkImageMemoryBarrier2 swapchain_barrier = {

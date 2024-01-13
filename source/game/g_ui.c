@@ -248,10 +248,16 @@ void UI_Keybinding_Secondary_QC(qcvm_t *qcvm) {
   qcvm_return_int(qcvm, secondary_key);
 }
 
-void UI_Quit_QC(qcvm_t *qcvm) {
+void C_Quit_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
 
   CL_ExitClient(game->client);
+}
+
+void C_Restart_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+
+  CL_RestartClient(game->client);
 }
 
 void G_UIInstall(qcvm_t *qcvm) {
@@ -304,9 +310,15 @@ void G_UIInstall(qcvm_t *qcvm) {
       .argc = 0,
   };
 
-  qcvm_export_t export_UI_Quit = {
-      .func = UI_Quit_QC,
-      .name = "UI_Quit",
+  qcvm_export_t export_C_Quit = {
+      .func = C_Quit_QC,
+      .name = "C_Quit",
+      .argc = 0,
+  };
+
+    qcvm_export_t export_C_Restart = {
+      .func = C_Restart_QC,
+      .name = "C_Restart",
       .argc = 0,
   };
 
@@ -385,7 +397,8 @@ void G_UIInstall(qcvm_t *qcvm) {
   qcvm_add_export(qcvm, &export_UI_Button);
   qcvm_add_export(qcvm, &export_UI_CheckBox);
   qcvm_add_export(qcvm, &export_UI_Space);
-  qcvm_add_export(qcvm, &export_UI_Quit);
+  qcvm_add_export(qcvm, &export_C_Quit);
+  qcvm_add_export(qcvm, &export_C_Restart);
   qcvm_add_export(qcvm, &export_UI_Begin_Select);
   qcvm_add_export(qcvm, &export_UI_Option);
   qcvm_add_export(qcvm, &export_UI_End_Select);

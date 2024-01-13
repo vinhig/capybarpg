@@ -10,12 +10,9 @@
 int main(int argc, char **argv) {
   printf("Creating client using Maidenless Engine `%s`.\n", VERSION);
 
-  client_desc_t desc = {
-      .width = 1280,
-      .height = 720,
-      .fullscreen = false,
-      .game = "",
-  };
+  // Keep the client description as default, so the config file/command line arguments
+  // can overwrite it easy
+  client_desc_t desc = client_desc_default();
 
   CL_ParseClientDesc(&desc, argc, argv);
 
@@ -64,6 +61,8 @@ int main(int argc, char **argv) {
       "Exiting client. Thx for using the Maidenless Engine `%s`. Maybe you'll "
       "find your maiden one day.\n",
       VERSION);
+
+  printf("%s\n", argv[0]);
 
   return 0;
 }

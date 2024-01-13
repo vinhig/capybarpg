@@ -262,8 +262,17 @@ struct vk_rend_t {
 
   unsigned current_frame;
 
-  unsigned width;
-  unsigned height;
+  unsigned screen_width;
+  unsigned screen_height;
+
+  unsigned view_width;
+  unsigned view_height;
+
+  bool vsync;
+  unsigned framerate;
+
+  double last_present;
+  double present_interval;
 
   struct ImFont *imgui_font_default;
   struct ImFont *imgui_font_menu;
