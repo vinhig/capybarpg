@@ -7,17 +7,22 @@
 #include <stdio.h>
 #include <string.h>
 
-static inline __attribute__((always_inline)) char* UI_Translation(game_t* game, unsigned idx) {
-  return game->translations[game->current_language][idx];
+static inline __attribute__((always_inline)) char *UI_Translation(game_t *game, unsigned idx) {
+  if (idx >= game->entry_count) {
+    return "oh no no!";
+  }
+  // printf("idx == %d\n", idx);
+  return game->translations[game->current_language][idx + 1];
 }
 
 void UI_Begin_Menu_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
 
+  const char *style = qcvm_get_parm_string(qcvm, 0);
+
   unsigned screen_width, screen_height;
   CL_GetViewDim(game->client, &screen_width, &screen_height);
 
-  const char *style = qcvm_get_parm_string(qcvm, 0);
   strcpy(&game->current_ui_style[0], style);
 
   ImGuiWindowFlags flags = 0;
@@ -36,7 +41,7 @@ void UI_Begin_Menu_QC(qcvm_t *qcvm) {
     ImGui_PopStyleVar();
   } else if (strcmp(style, "settings_menu") == 0) {
     ImGui_SetNextWindowBgAlpha(0.4f);
-    ImGui_SetNextWindowSize((ImVec2){(float)screen_width / 2.0, 400.0f}, ImGuiCond_Once);
+    ImGui_SetNextWindowSize((ImVec2){(float)screen_width / 2.0f + 64.0f, 400.0f}, ImGuiCond_Once);
     ImGui_SetNextWindowPos((ImVec2){400.0f, ((float)screen_height / 2.0) - (400.0f / 2.0)}, ImGuiCond_Once);
 
     flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
@@ -47,7 +52,7 @@ void UI_Begin_Menu_QC(qcvm_t *qcvm) {
     ImGui_PopStyleVar();
   } else if (strcmp(style, "settings_menu_apply") == 0) {
     ImGui_SetNextWindowBgAlpha(0.4f);
-    ImGui_SetNextWindowSize((ImVec2){(float)screen_width / 2.0, 64.0f}, ImGuiCond_Once);
+    ImGui_SetNextWindowSize((ImVec2){(float)screen_width / 2.0f + 64.0f, 64.0f}, ImGuiCond_Once);
     ImGui_SetNextWindowPos((ImVec2){400.0f, ((float)screen_height / 2.0) - (400.0f / 2.0) + 400.0f}, ImGuiCond_Once);
 
     flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
@@ -69,32 +74,37 @@ void UI_End_Menu_QC(qcvm_t *qcvm) {
   strcpy(&game->current_ui_style[0], "");
 }
 
-void UI_Text_QC(qcvm_t *qcvm) {
-  const char *label = qcvm_get_parm_string(qcvm, 0);
+void UI_Text(const char *label) {
 
   ImGui_Text("%s", label);
 }
 
-void UI_Subtitle_QC(qcvm_t *qcvm) {
+void UI_Text_QC(qcvm_t *qcvm) {
   const char *label = qcvm_get_parm_string(qcvm, 0);
 
+  UI_Text(label);
+}
+
+void UI_Subtitle(const char *label) {
   float width = ImGui_GetContentRegionAvail().x;
   float text_width = ImGui_CalcTextSize(label).x;
   ImGui_SetCursorPosX((width - text_width) * 0.5f);
   ImGui_Text("%s", label);
 }
 
-void UI_Button_QC(qcvm_t *qcvm) {
+void UI_Subtitle_QC(qcvm_t *qcvm) {
   const char *label = qcvm_get_parm_string(qcvm, 0);
-  int enabled = qcvm_get_parm_int(qcvm, 1);
+
+  UI_Subtitle(label);
+}
+
+bool UI_Button(game_t *game, const char *label, bool enabled) {
 
   ImGui_BeginDisabled(!enabled);
 
   if (!enabled) {
     ImGui_PushStyleVar(ImGuiStyleVar_Alpha, 0.30f);
   }
-
-  game_t *game = qcvm_get_user_data(qcvm);
 
   bool clicked = false;
 
@@ -116,15 +126,18 @@ void UI_Button_QC(qcvm_t *qcvm) {
 
   ImGui_EndDisabled();
 
-  qcvm_return_int(qcvm, clicked);
+  return clicked;
 }
 
-void UI_CheckBox_QC(qcvm_t *qcvm) {
-  const char *label = qcvm_get_parm_string(qcvm, 0);
-  bool value = qcvm_get_parm_int(qcvm, 1);
-
+void UI_Button_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
+  const char *label = qcvm_get_parm_string(qcvm, 0);
+  int enabled = qcvm_get_parm_int(qcvm, 1);
 
+  qcvm_return_int(qcvm, UI_Button(game, label, enabled));
+}
+
+bool UI_CheckBox(game_t *game, const char *label, bool value) {
   if (strcmp(game->current_ui_style, "settings_menu") == 0) {
     int total_w = ImGui_GetContentRegionAvail().x;
     ImGui_Text("%s", label);
@@ -137,20 +150,23 @@ void UI_CheckBox_QC(qcvm_t *qcvm) {
     ImGui_Checkbox(label, &value);
   }
 
-  qcvm_return_int(qcvm, value);
+  return value;
+}
+
+void UI_CheckBox_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+  const char *label = qcvm_get_parm_string(qcvm, 0);
+  bool value = qcvm_get_parm_int(qcvm, 1);
+
+  qcvm_return_int(qcvm, UI_CheckBox(game, label, value));
 }
 
 void UI_Space_QC(qcvm_t *qcvm) {
   ImGui_Dummy((ImVec2){0.0f, 32.0f});
 }
 
-void UI_Begin_Select_QC(qcvm_t *qcvm) {
-  game_t *game = qcvm_get_user_data(qcvm);
-
-  const char *label = qcvm_get_parm_string(qcvm, 0);
-  const char *original_value = qcvm_get_parm_string(qcvm, 1);
-
-  char id[32];
+bool UI_Begin_Select(game_t *game, const char *label, const char *original_value) {
+  char id[64];
   sprintf(&id[0], "##%s", label);
 
   bool r = false;
@@ -166,14 +182,25 @@ void UI_Begin_Select_QC(qcvm_t *qcvm) {
     r = ImGui_BeginCombo(label, original_value, ImGuiComboFlags_None);
   }
 
-  qcvm_return_int(qcvm, r);
+  return r;
+}
+
+void UI_Begin_Select_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+  const char *label = qcvm_get_parm_string(qcvm, 0);
+  const char *original_value = qcvm_get_parm_string(qcvm, 1);
+
+  qcvm_return_int(qcvm, UI_Begin_Select(game, label, original_value));
+}
+
+bool UI_Option(const char *label) {
+  return ImGui_Selectable(label);
 }
 
 void UI_Option_QC(qcvm_t *qcvm) {
   const char *label = qcvm_get_parm_string(qcvm, 0);
-  bool r = ImGui_Selectable(label);
 
-  qcvm_return_int(qcvm, r);
+  qcvm_return_int(qcvm, UI_Option(label));
 }
 
 void UI_End_Select_QC(qcvm_t *qcvm) {
@@ -205,11 +232,16 @@ SDL_KeyCode UI_WaitForKeyPress() {
   }
 }
 
-void UI_Keybinding_Begin_QC(qcvm_t *qcvm) {
-  const char *label = qcvm_get_parm_string(qcvm, 0);
+void UI_Keybinding_Begin(const char *label) {
   ImGui_Text("%s", label);
 
   ImGui_PushStyleVarImVec2(ImGuiStyleVar_ButtonTextAlign, (ImVec2){0.5f, 0.5f});
+}
+
+void UI_Keybinding_Begin_QC(qcvm_t *qcvm) {
+  const char *label = qcvm_get_parm_string(qcvm, 0);
+
+  UI_Keybinding_Begin(label);
 }
 
 void UI_Keybinding_End_QC(qcvm_t *qcvm) {
@@ -264,12 +296,76 @@ void C_Restart_QC(qcvm_t *qcvm) {
   CL_RestartClient(game->client);
 }
 
-void UI_LoadTranslation_QC(qcvm_t* qcvm) {
+void UI_LoadTranslation_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
 
-  const char* path = qcvm_get_parm_string(qcvm, 0);
+  const char *path = qcvm_get_parm_string(qcvm, 0);
 
   G_LoadTranslation(game, path);
+}
+
+void UI_Keybinding_BeginLocalized_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+  int text_id = qcvm_get_parm_int(qcvm, 0);
+  const char *translation = UI_Translation(game, text_id);
+  UI_Keybinding_Begin(translation);
+}
+
+void UI_TextLocalized_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+  int text_id = qcvm_get_parm_int(qcvm, 0);
+  const char *translation = UI_Translation(game, text_id);
+  UI_Text(translation);
+}
+
+void UI_SubtitleLocalized_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+  int text_id = qcvm_get_parm_int(qcvm, 0);
+  const char *translation = UI_Translation(game, text_id);
+  UI_Subtitle(translation);
+}
+
+void UI_ButtonLocalized_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+  int text_id = qcvm_get_parm_int(qcvm, 0);
+  int enabled = qcvm_get_parm_int(qcvm, 1);
+  const char *translation = UI_Translation(game, text_id);
+
+  qcvm_return_int(qcvm, UI_Button(game, translation, enabled));
+}
+
+void UI_CheckBoxLocalized_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+  int text_id = qcvm_get_parm_int(qcvm, 0);
+  int value = qcvm_get_parm_int(qcvm, 1);
+
+  const char *translation = UI_Translation(game, text_id);
+
+  qcvm_return_int(qcvm, UI_CheckBox(game, translation, value));
+}
+
+void UI_Begin_SelectLocalized_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+  int text_id = qcvm_get_parm_int(qcvm, 0);
+  const char *value = qcvm_get_parm_string(qcvm, 1);
+  const char *translation = UI_Translation(game, text_id);
+
+  qcvm_return_int(qcvm, UI_Begin_Select(game, translation, value));
+}
+
+void UI_OptionLocalized_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+  int text_id = qcvm_get_parm_int(qcvm, 0);
+  const char *translation = UI_Translation(game, text_id);
+
+  qcvm_return_int(qcvm, UI_Option(translation));
+}
+
+void UI_SetCurrentLanguage_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+  int language_idx = qcvm_get_parm_int(qcvm, 0);
+
+  game->current_language = language_idx;
 }
 
 void G_UIInstall(qcvm_t *qcvm) {
@@ -328,7 +424,7 @@ void G_UIInstall(qcvm_t *qcvm) {
       .argc = 0,
   };
 
-    qcvm_export_t export_C_Restart = {
+  qcvm_export_t export_C_Restart = {
       .func = C_Restart_QC,
       .name = "C_Restart",
       .argc = 0,
@@ -402,11 +498,68 @@ void G_UIInstall(qcvm_t *qcvm) {
       .args[0] = {.name = "key", .type = QCVM_INT},
   };
 
-    qcvm_export_t export_UI_LoadTranslation = {
+  qcvm_export_t export_UI_LoadTranslation = {
       .func = UI_LoadTranslation_QC,
       .name = "UI_LoadTranslation",
       .argc = 1,
       .args[0] = {.name = "path", .type = QCVM_STRING},
+  };
+
+  qcvm_export_t export_UI_Keybinding_BeginLocalized = {
+      .func = UI_Keybinding_BeginLocalized_QC,
+      .name = "UI_Keybinding_BeginLocalized",
+      .argc = 1,
+      .args[0] = {.name = "language", .type = QCVM_INT},
+  };
+
+  qcvm_export_t export_UI_SetCurrentLanguage = {
+      .func = UI_SetCurrentLanguage_QC,
+      .name = "UI_SetCurrentLanguage",
+      .argc = 1,
+      .args[0] = {.name = "language", .type = QCVM_INT},
+  };
+
+  qcvm_export_t export_UI_TextLocalized = {
+      .func = UI_TextLocalized_QC,
+      .name = "UI_TextLocalized",
+      .argc = 1,
+      .args[0] = {.name = "text", .type = QCVM_INT},
+  };
+
+  qcvm_export_t export_UI_SubtitleLocalized = {
+      .func = UI_SubtitleLocalized_QC,
+      .name = "UI_SubtitleLocalized",
+      .argc = 1,
+      .args[0] = {.name = "text", .type = QCVM_INT},
+  };
+
+  qcvm_export_t export_UI_ButtonLocalized = {
+      .func = UI_ButtonLocalized_QC,
+      .name = "UI_ButtonLocalized",
+      .argc = 1,
+      .args[0] = {.name = "text", .type = QCVM_INT},
+  };
+
+  qcvm_export_t export_UI_CheckBoxLocalized = {
+      .func = UI_CheckBoxLocalized_QC,
+      .name = "UI_CheckBoxLocalized",
+      .argc = 1,
+      .args[0] = {.name = "text", .type = QCVM_INT},
+  };
+
+  qcvm_export_t export_UI_Begin_SelectLocalized = {
+      .func = UI_Begin_SelectLocalized_QC,
+      .name = "UI_Begin_SelectLocalized",
+      .argc = 2,
+      .args[0] = {.name = "text", .type = QCVM_INT},
+      .args[1] = {.name = "original_value", .type = QCVM_STRING},
+  };
+
+  qcvm_export_t export_UI_OptionLocalized = {
+      .func = UI_OptionLocalized_QC,
+      .name = "UI_OptionLocalized",
+      .argc = 1,
+      .args[0] = {.name = "text", .type = QCVM_INT},
   };
 
   qcvm_add_export(qcvm, &export_UI_Begin_Menu);
@@ -428,5 +581,13 @@ void G_UIInstall(qcvm_t *qcvm) {
   qcvm_add_export(qcvm, &export_UI_GetKeyFromName);
   qcvm_add_export(qcvm, &export_UI_GetNameFromKey);
 
+  qcvm_add_export(qcvm, &export_UI_SetCurrentLanguage);
   qcvm_add_export(qcvm, &export_UI_LoadTranslation);
+  qcvm_add_export(qcvm, &export_UI_Keybinding_BeginLocalized);
+  qcvm_add_export(qcvm, &export_UI_TextLocalized);
+  qcvm_add_export(qcvm, &export_UI_SubtitleLocalized);
+  qcvm_add_export(qcvm, &export_UI_ButtonLocalized);
+  qcvm_add_export(qcvm, &export_UI_CheckBoxLocalized);
+  qcvm_add_export(qcvm, &export_UI_Begin_SelectLocalized);
+  qcvm_add_export(qcvm, &export_UI_OptionLocalized);
 }

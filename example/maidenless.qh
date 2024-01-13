@@ -177,11 +177,12 @@ void UI_LoadTranslation(string path) = #0;
 // the localized variant of ui methods
 // instead of passing a string, you pass the index of the line containing
 // your translation
+void UI_Keybinding_BeginLocalized(int text) = #0;
 void UI_TextLocalized(int text) = #0;
 void UI_SubtitleLocalized(int text) = #0;
 int UI_ButtonLocalized(int text, int enabled) = #0;
 int UI_CheckBoxLocalized(int text, int original_value) = #0;
-int UI_Begin_SelectLocalized(int text, int original_value) = #0;
+int UI_Begin_SelectLocalized(int text, string original_value) = #0;
 int UI_OptionLocalized(int text) = #0;
 
 void UI_Keybinding_Begin(string text) = #0;

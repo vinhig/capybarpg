@@ -19,7 +19,7 @@ void G_LoadTranslation(game_t *game, const char *path) {
   fseek(f, 0, SEEK_END);
   size_t size = ftell(f);
   fseek(f, 0, SEEK_SET);
-  char *content = calloc(size+1, sizeof(char));
+  char *content = calloc(size, sizeof(char));
   fread(content, 1, size, f);
 
   unsigned language_count = 0;
@@ -31,8 +31,8 @@ void G_LoadTranslation(game_t *game, const char *path) {
   char *tmp_line = malloc(4096);
   char *tmp_entry = malloc(2048);
 
-  while (idx < len) {
-    if (content[idx] == '\n') {
+  while (idx <= len) {
+    if (content[idx] == '\n' || idx == len) {
       strncpy(tmp_line, content + cursor, idx - cursor);
       tmp_line[idx - cursor] = '\0';
 
@@ -102,8 +102,9 @@ void G_LoadTranslation(game_t *game, const char *path) {
   printf("ok loading done, let's see what's inside\n");
 
   for (unsigned i = 0; i < game->entry_count; i++) {
-    printf("%s == %s\n", game->translations[0][i], game->translations[1][i]);
+    printf("%d) %s == %s\n", i, game->translations[0][i], game->translations[1][i]);
   }
 
   free(tmp_line);
+  free(tmp_entry);
 }
