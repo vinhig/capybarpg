@@ -7,6 +7,10 @@
 #include <stdio.h>
 #include <string.h>
 
+static inline __attribute__((always_inline)) char* UI_Translation(game_t* game, unsigned idx) {
+  return game->translations[game->current_language][idx];
+}
+
 void UI_Begin_Menu_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
 
@@ -260,6 +264,14 @@ void C_Restart_QC(qcvm_t *qcvm) {
   CL_RestartClient(game->client);
 }
 
+void UI_LoadTranslation_QC(qcvm_t* qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+
+  const char* path = qcvm_get_parm_string(qcvm, 0);
+
+  G_LoadTranslation(game, path);
+}
+
 void G_UIInstall(qcvm_t *qcvm) {
   qcvm_export_t export_UI_Begin_Menu = {
       .func = UI_Begin_Menu_QC,
@@ -390,6 +402,13 @@ void G_UIInstall(qcvm_t *qcvm) {
       .args[0] = {.name = "key", .type = QCVM_INT},
   };
 
+    qcvm_export_t export_UI_LoadTranslation = {
+      .func = UI_LoadTranslation_QC,
+      .name = "UI_LoadTranslation",
+      .argc = 1,
+      .args[0] = {.name = "path", .type = QCVM_STRING},
+  };
+
   qcvm_add_export(qcvm, &export_UI_Begin_Menu);
   qcvm_add_export(qcvm, &export_UI_End_Menu);
   qcvm_add_export(qcvm, &export_UI_Text);
@@ -408,4 +427,6 @@ void G_UIInstall(qcvm_t *qcvm) {
   qcvm_add_export(qcvm, &export_UI_Keybinding_End);
   qcvm_add_export(qcvm, &export_UI_GetKeyFromName);
   qcvm_add_export(qcvm, &export_UI_GetNameFromKey);
+
+  qcvm_add_export(qcvm, &export_UI_LoadTranslation);
 }

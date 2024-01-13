@@ -1,7 +1,7 @@
 # , 'b_lundef=false', 'b_sanitize=address,undefined'
 project('maidenless', 'c', 'cpp',
   version : '0.1',
-  default_options : ['warning_level=3', 'c_std=gnu11', 'cpp_std=c++17', 'b_lundef=false'])
+  default_options : ['warning_level=3', 'c_std=gnu11', 'cpp_std=c++17'])
 
 cc = meson.get_compiler('c')
 m = cc.find_library('m', required : false)
@@ -159,6 +159,7 @@ exe = executable('maidenless',
   'source/game/g_data.c',
   'source/game/g_terrain.c',
   'source/game/g_ui.c',
+  'source/game/g_localization.c',
 
   'source/vk/vk.c',
   'source/vk/vk_gbuffer.c',

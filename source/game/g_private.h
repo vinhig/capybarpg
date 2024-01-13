@@ -212,6 +212,11 @@ struct game_t {
 
   char current_ui_style[32];
 
+  char ***translations;
+  unsigned current_language;
+  unsigned language_count;
+  unsigned entry_count;
+
   // Thread's ID as given by the OS isn't necessarly an integer in [0-16) range
   // So we keep a record of which os_id (that can be something
   // like -176183616) corresponds to which local_id [0-16)
@@ -229,4 +234,3 @@ void G_TerrainInstall(qcvm_t *qcvm);
 void G_Add_Wall(game_t *game, int map, int x, int y, float health,
                 wall_t *wall_recipe);
 void G_UIInstall(qcvm_t *qcvm);
-

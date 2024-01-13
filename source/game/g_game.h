@@ -190,3 +190,5 @@ bool G_Load(client_t *client, game_t *game);
 void G_Rectangle(ivec2 start, ivec2 end, int *indices, int *count);
 
 character_t *G_GetCharacter(game_t *game, const char *family, wchar_t c);
+
+void G_LoadTranslation(game_t *game, const char *path);

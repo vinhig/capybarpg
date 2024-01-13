@@ -157,6 +157,7 @@ float G_Entity_GetInventoryAmount(entity e, string recipe) = #0;
 float G_Entity_RemoveInventoryAmount(entity e, string recipe, float amount) = #0;
 float G_Entity_AddInventoryAmount(entity e, string recipe, float amount) = #0;
 
+// non localized ui method, it just displays the string specified
 void UI_Begin_Menu(string style) = #0;
 void UI_End_Menu() = #0;
 void UI_Text(string text) = #0;
@@ -167,6 +168,21 @@ int UI_CheckBox(string text, int original_value) = #0;
 int UI_Begin_Select(string text, string original_value) = #0;
 int UI_Option(string text) = #0;
 void UI_End_Select() = #0;
+
+// language is the index of the column to look up for
+// translation
+void UI_SetCurrentLanguage(int language) = #0;
+void UI_LoadTranslation(string path) = #0;
+
+// the localized variant of ui methods
+// instead of passing a string, you pass the index of the line containing
+// your translation
+void UI_TextLocalized(int text) = #0;
+void UI_SubtitleLocalized(int text) = #0;
+int UI_ButtonLocalized(int text, int enabled) = #0;
+int UI_CheckBoxLocalized(int text, int original_value) = #0;
+int UI_Begin_SelectLocalized(int text, int original_value) = #0;
+int UI_OptionLocalized(int text) = #0;
 
 void UI_Keybinding_Begin(string text) = #0;
 int UI_Keybinding_Primary(string text) = #0;
