@@ -5,13 +5,20 @@
 #include "vk/vk_vulkan.h"
 
 #include <SDL2/SDL.h>
+#include <errno.h>
+#include <minini/minIni.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <wchar.h>
+#include <zpl/zpl.h>
 
 #include <cimgui.h>
 
 #include "game/g_game.h"
+
+ZPL_TABLE_DECLARE(extern, string_dict_t, CL_Strings_, short_string_t)
+ZPL_TABLE_DECLARE(extern, float_dict_t, CL_Floats_, float)
+ZPL_TABLE_DECLARE(extern, int_dict_t, CL_Integers_, int)
 
 struct client_t {
   SDL_Window *window;
@@ -24,6 +31,11 @@ struct client_t {
   vk_rend_t *rend;
 
   input_t input;
+
+  string_dict_t global_variable_strings;
+  string_dict_t global_variable_keys; // save the string key (used when writing config file that are a dump of certain global variables)
+  float_dict_t global_variable_floats;
+  int_dict_t global_variable_ints;
 };
 
 void *CL_GetWindow(client_t *client) { return client->window; }
@@ -126,6 +138,15 @@ bool CL_ParseClientDesc(client_desc_t *desc, int argc, char *argv[]) {
 }
 
 client_t *CL_CreateClient(const char *title, client_desc_t *desc) {
+  client_t *client = calloc(1, sizeof(client_t));
+
+  CL_Floats_init(&client->global_variable_floats, zpl_heap_allocator());
+  CL_Strings_init(&client->global_variable_strings, zpl_heap_allocator());
+  CL_Strings_init(&client->global_variable_keys, zpl_heap_allocator());
+  CL_Integers_init(&client->global_variable_ints, zpl_heap_allocator());
+
+  CL_LoadGlobalVariables(client, "settings.ini");
+
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_JOYSTICK) != 0) {
     printf("Failed to initialize SDL2.\n");
     return NULL;
@@ -154,8 +175,6 @@ client_t *CL_CreateClient(const char *title, client_desc_t *desc) {
     SDL_Quit();
     return NULL;
   }
-
-  client_t *client = calloc(1, sizeof(client_t));
 
   client->state = CLIENT_RUNNING;
   client->window = window;
@@ -342,4 +361,91 @@ void CL_DestroyClient(client_t *client) {
   SDL_Quit();
 
   free(client);
+}
+
+void CL_LoadGlobalVariables(client_t *client, const char *config_file) {
+  char section[64];
+  char str[64];
+
+  char value[64];
+
+  char the_key[128];
+
+  char *endptr = NULL;
+
+  for (unsigned s = 0; ini_getsection(s, section, sizeof(section), config_file) > 0; s++) {
+    for (unsigned k = 0; ini_getkey(section, k, str, sizeof(section), config_file) > 0; k++) {
+      sprintf(&the_key[0], "%s$%s", section, str);
+
+      zpl_u64 key = zpl_fnv64(the_key, strlen(the_key));
+
+      ini_gets(section, str, "", value, sizeof(value), config_file);
+
+      errno = 0;
+
+      long integer = strtol(value, &endptr, 10);
+
+      if (errno == 0 && !*endptr) {
+        // it's an integer!
+        CL_Integers_set(&client->global_variable_ints, key, integer);
+      } else {
+        errno = 0;
+
+        float number = strtof(value, &endptr);
+
+        if (errno == 0 && !*endptr) {
+          // it's a float!
+          CL_Floats_set(&client->global_variable_floats, key, number);
+        } else {
+          // probably a string
+          short_string_t short_str;
+          strcpy(short_str.str, value);
+          CL_Strings_set(&client->global_variable_strings, key, short_str);
+        }
+      }
+
+      short_string_t str_key;
+      strcpy(&str_key.str[0], the_key);
+      CL_Strings_set(&client->global_variable_keys, key, str_key);
+    }
+  }
+}
+
+void CL_DumpGlobalVariables(client_t *client, const char *prefix, const char *config_file) {
+  for (unsigned i = 0; i < zpl_array_count(client->global_variable_floats.entries); i++) {
+    short_string_t *str_key = CL_Strings_get(&client->global_variable_keys, client->global_variable_floats.entries[i].key);
+
+    if (strncmp(str_key->str, prefix, strlen(prefix)) == 0) {
+      ini_putf(prefix, &str_key->str[0] + strlen(prefix) + 1, client->global_variable_floats.entries[i].value, config_file);
+    }
+  }
+
+  for (unsigned i = 0; i < zpl_array_count(client->global_variable_strings.entries); i++) {
+    short_string_t *str_key = CL_Strings_get(&client->global_variable_keys, client->global_variable_strings.entries[i].key);
+
+    if (strncmp(str_key->str, prefix, strlen(prefix)) == 0) {
+      ini_puts(prefix, &str_key->str[0] + strlen(prefix) + 1, client->global_variable_strings.entries[i].value.str, config_file);
+    }
+  }
+
+  for (unsigned i = 0; i < zpl_array_count(client->global_variable_ints.entries); i++) {
+    short_string_t *str_key = CL_Strings_get(&client->global_variable_keys, client->global_variable_ints.entries[i].key);
+
+    if (strncmp(str_key->str, prefix, strlen(prefix)) == 0) {
+      ini_putl(prefix, &str_key->str[0] + strlen(prefix) + 1, client->global_variable_ints.entries[i].value, config_file);
+    }
+  }
+}
+
+string_dict_t *CL_GetStringGlobalVariables(client_t *client) {
+  return &client->global_variable_strings;
+}
+string_dict_t *CL_GetKeyGlobalVariables(client_t *client) {
+  return &client->global_variable_keys;
+}
+int_dict_t *CL_GetIntegerlobalVariables(client_t *client) {
+  return &client->global_variable_ints;
+}
+float_dict_t *CL_GetFloatGlobalVariables(client_t *client) {
+  return &client->global_variable_floats;
 }

@@ -2,9 +2,14 @@
 // clang-format sometimes dumb
 #include "game/g_game.h"
 #include "qcvm/qcvm.h"
+#include <client/cl_client.h>
 #include <game/g_private.h>
 #include <stdlib.h>
 #include <string.h>
+
+ZPL_TABLE_DECLARE(extern, string_dict_t, CL_Strings_, short_string_t)
+ZPL_TABLE_DECLARE(extern, float_dict_t, CL_Floats_, float)
+ZPL_TABLE_DECLARE(extern, int_dict_t, CL_Integers_, int)
 
 void C_Rand(qcvm_t *qcvm) {
   float min = qcvm_get_parm_float(qcvm, 0);
@@ -21,7 +26,7 @@ void C_Global_HasFloat_QC(qcvm_t *qcvm) {
   const char *name = qcvm_get_parm_string(qcvm, 0);
   zpl_u64 key = zpl_fnv64(name, strlen(name));
 
-  qcvm_return_int(qcvm, G_Floats_get(&game->global_variable_floats, key) != NULL);
+  qcvm_return_int(qcvm, CL_Floats_get(CL_GetFloatGlobalVariables(game->client), key) != NULL);
 }
 
 void C_Global_SetFloat_QC(qcvm_t *qcvm) {
@@ -31,11 +36,11 @@ void C_Global_SetFloat_QC(qcvm_t *qcvm) {
   float value = qcvm_get_parm_float(qcvm, 1);
   zpl_u64 key = zpl_fnv64(name, strlen(name));
 
-  G_Floats_set(&game->global_variable_floats, key, value);
+  CL_Floats_set(CL_GetFloatGlobalVariables(game->client), key, value);
 
   short_string_t str_key;
   strcpy(&str_key.str[0], name);
-  G_Strings_set(&game->global_variable_keys, key, str_key);
+  CL_Strings_set(CL_GetKeyGlobalVariables(game->client), key, str_key);
 }
 
 void C_Global_GetFloat_QC(qcvm_t *qcvm) {
@@ -44,7 +49,7 @@ void C_Global_GetFloat_QC(qcvm_t *qcvm) {
   const char *name = qcvm_get_parm_string(qcvm, 0);
   zpl_u64 key = zpl_fnv64(name, strlen(name));
 
-  float *the_float = G_Floats_get(&game->global_variable_floats, key);
+  float *the_float = CL_Floats_get(CL_GetFloatGlobalVariables(game->client), key);
 
   if (the_float) {
     qcvm_return_float(qcvm, *the_float);
@@ -59,7 +64,7 @@ void C_Global_HasInteger_QC(qcvm_t *qcvm) {
   const char *name = qcvm_get_parm_string(qcvm, 0);
   zpl_u64 key = zpl_fnv64(name, strlen(name));
 
-  qcvm_return_int(qcvm, G_Integers_get(&game->global_variable_ints, key) != NULL);
+  qcvm_return_int(qcvm, CL_Integers_get(CL_GetIntegerlobalVariables(game->client), key) != NULL);
 }
 
 void C_Global_SetInteger_QC(qcvm_t *qcvm) {
@@ -69,11 +74,11 @@ void C_Global_SetInteger_QC(qcvm_t *qcvm) {
   int value = qcvm_get_parm_int(qcvm, 1);
   zpl_u64 key = zpl_fnv64(name, strlen(name));
 
-  G_Integers_set(&game->global_variable_ints, key, value);
+  CL_Integers_set(CL_GetIntegerlobalVariables(game->client), key, value);
 
   short_string_t str_key;
   strcpy(&str_key.str[0], name);
-  G_Strings_set(&game->global_variable_keys, key, str_key);
+  CL_Strings_set(CL_GetKeyGlobalVariables(game->client), key, str_key);
 }
 
 void C_Global_GetInteger_QC(qcvm_t *qcvm) {
@@ -82,7 +87,7 @@ void C_Global_GetInteger_QC(qcvm_t *qcvm) {
   const char *name = qcvm_get_parm_string(qcvm, 0);
   zpl_u64 key = zpl_fnv64(name, strlen(name));
 
-  int *the_int = G_Integers_get(&game->global_variable_ints, key);
+  int *the_int = CL_Integers_get(CL_GetIntegerlobalVariables(game->client), key);
 
   if (the_int) {
     qcvm_return_int(qcvm, *the_int);
@@ -97,7 +102,7 @@ void C_Global_HasString_QC(qcvm_t *qcvm) {
   const char *name = qcvm_get_parm_string(qcvm, 0);
   zpl_u64 key = zpl_fnv64(name, strlen(name));
 
-  qcvm_return_int(qcvm, G_Strings_get(&game->global_variable_strings, key) != NULL);
+  qcvm_return_int(qcvm, CL_Strings_get(CL_GetStringGlobalVariables(game->client), key) != NULL);
 }
 
 void C_Global_SetString_QC(qcvm_t *qcvm) {
@@ -110,11 +115,11 @@ void C_Global_SetString_QC(qcvm_t *qcvm) {
   short_string_t str;
   strcpy(str.str, string);
 
-  G_Strings_set(&game->global_variable_strings, key, str);
+  CL_Strings_set(CL_GetStringGlobalVariables(game->client), key, str);
 
   short_string_t str_key;
   strcpy(&str_key.str[0], name);
-  G_Strings_set(&game->global_variable_keys, key, str_key);
+  CL_Strings_set(CL_GetKeyGlobalVariables(game->client), key, str_key);
 }
 
 void C_Global_GetString_QC(qcvm_t *qcvm) {
@@ -123,7 +128,7 @@ void C_Global_GetString_QC(qcvm_t *qcvm) {
   const char *name = qcvm_get_parm_string(qcvm, 0);
   zpl_u64 key = zpl_fnv64(name, strlen(name));
 
-  const char *yo = &G_Strings_get(&game->global_variable_strings, key)->str[0];
+  const char *yo = &CL_Strings_get(CL_GetStringGlobalVariables(game->client), key)->str[0];
 
   qcvm_return_string(qcvm, yo);
 }
@@ -131,14 +136,18 @@ void C_Global_GetString_QC(qcvm_t *qcvm) {
 void C_LoadGlobalVariables_QC(qcvm_t *qcvm) {
   const char *config_file = qcvm_get_parm_string(qcvm, 0);
 
-  G_LoadGlobalVariables(qcvm_get_user_data(qcvm), config_file);
+  game_t *game = qcvm_get_user_data(qcvm);
+
+  CL_LoadGlobalVariables(game->client, config_file);
 }
 
 void C_DumpGlobalVariables_QC(qcvm_t *qcvm) {
   const char *prefix = qcvm_get_parm_string(qcvm, 0);
   const char *config_file = qcvm_get_parm_string(qcvm, 1);
 
-  G_DumpGlobalVariables(qcvm_get_user_data(qcvm), prefix, config_file);
+  game_t *game = qcvm_get_user_data(qcvm);
+
+  CL_DumpGlobalVariables(game->client, prefix, config_file);
 }
 
 void G_CommonInstall(qcvm_t *qcvm) {

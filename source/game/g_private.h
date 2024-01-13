@@ -26,10 +26,6 @@ ZPL_TABLE_DECLARE(extern, character_bank_t, CL_Characters_, character_t)
 ZPL_TABLE_DECLARE(extern, pawn_bank_t, G_Pawns_, pawn_t)
 ZPL_TABLE_DECLARE(extern, inventory_t, G_Inventory_, float)
 
-ZPL_TABLE_DECLARE(extern, string_dict_t, G_Strings_, short_string_t)
-ZPL_TABLE_DECLARE(extern, float_dict_t, G_Floats_, float)
-ZPL_TABLE_DECLARE(extern, int_dict_t, G_Integers_, int)
-
 typedef struct cpu_path_t {
   vec2 *points;
   unsigned count;
@@ -216,11 +212,6 @@ struct game_t {
 
   char current_ui_style[32];
 
-  string_dict_t global_variable_strings;
-  string_dict_t global_variable_keys; // save the string key (used when writing config file that are a dump of certain global variables)
-  float_dict_t global_variable_floats;
-  int_dict_t global_variable_ints;
-
   // Thread's ID as given by the OS isn't necessarly an integer in [0-16) range
   // So we keep a record of which os_id (that can be something
   // like -176183616) corresponds to which local_id [0-16)
@@ -239,5 +230,3 @@ void G_Add_Wall(game_t *game, int map, int x, int y, float health,
                 wall_t *wall_recipe);
 void G_UIInstall(qcvm_t *qcvm);
 
-void G_DumpGlobalVariables(game_t *game, const char *prefix, const char *config_file);
-void G_LoadGlobalVariables(game_t *game, const char *config_file);
