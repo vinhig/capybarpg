@@ -29,6 +29,10 @@ void G_WorkerLoadTexture(void *data);
 void G_WorkerLoadFont(void *data);
 
 void G_Scene_Run(game_t *game, const char *scene_name);
+// logically end the given scene, doesn't free anything
+void G_Scene_End(game_t *game, scene_t *scene);
+// free all resources belonging to the given scene
+void G_Scene_Destroy(game_t *game, scene_t *scene);
 
 void My_ImGui_NewFrame(client_t *client);
 
@@ -114,6 +118,9 @@ game_t *G_CreateGame(client_t *client, char *base) {
 }
 
 void G_DestroyGame(game_t *game) {
+  free(game->state.texts);
+  free(game->white_space);
+
   for (unsigned i = 0; i < zpl_array_count(game->material_bank.entries); i++) {
     material_bank_tEntry *entry = &game->material_bank.entries[i];
     free(entry->value.full_stack_path);
@@ -158,6 +165,14 @@ void G_DestroyGame(game_t *game) {
     free(entry->value.name);
   }
 
+  for (unsigned i = 0; i < zpl_array_count(game->pawn_bank.entries); i++) {
+    pawn_bank_tEntry *entry = &game->pawn_bank.entries[i];
+    free(entry->value.north_path);
+    free(entry->value.east_path);
+    free(entry->value.south_path);
+    free(entry->value.name);
+  }
+
   for (unsigned i = 0; i < game->scene_count; i++) {
     free(game->scenes[i].name);
   }
@@ -178,21 +193,30 @@ void G_DestroyGame(game_t *game) {
 
   free(game->font_textures);
 
+  G_DestroyTranslation(game);
+
+  CL_Characters_destroy(&game->console_character_bank);
+  CL_Characters_destroy(&game->game_character_bank);
+  G_Pawns_destroy(&game->pawn_bank);
   G_Materials_destroy(&game->material_bank);
   G_ImmediateTextures_destroy(&game->immediate_texture_bank);
   G_Walls_destroy(&game->wall_bank);
   G_Terrains_destroy(&game->terrain_bank);
 
+  for (unsigned i = 0; i < game->entity_count; i++) {
+    if (game->cpu_agents[i].inventory_initialized) {
+      G_Inventory_destroy(&game->cpu_agents[i].inventory);
+    }
+    if (game->cpu_agents[i].computed_path.points) {
+      free(game->cpu_agents[i].computed_path.points);
+    }
+  }
+
   for (unsigned i = 0; i < 16; i++) {
     qcvm_free(game->qcvms[i]);
   }
 
-  for (unsigned i = 0; i < game->map_count; i++) {
-    free(game->maps[i].cpu_tiles);
-    for (unsigned j = 0; j < 16; j++) {
-      jps_destroy(game->maps[i].jps_maps[j]);
-    }
-  }
+  G_Scene_Destroy(game, game->current_scene);
 
   zpl_jobs_free(&game->job_sys);
 
@@ -262,12 +286,11 @@ void G_WorkerUpdateAgents(void *data) {
   float delta = the_job->delta / 0.01666666;
   game_t *game = the_job->game;
   unsigned agent = the_job->agent;
-  map_t *the_map = &game->maps[the_job->map];
+  map_t *the_map = &game->current_scene->maps[the_job->map];
 
   if (game->cpu_agents[agent].state == AGENT_PATH_FINDING) {
     // Find a jps_map that is available hehe
     // That's called lock free stuffy stuff
-
     unsigned thread_id = G_GetThreadId(game, zpl_thread_current_id());
 
     struct map *jps_map = the_map->jps_maps[thread_id];
@@ -282,6 +305,11 @@ void G_WorkerUpdateAgents(void *data) {
 
     unsigned size = il_size(list);
 
+    if (game->cpu_agents[agent].computed_path.points) {
+      free(game->cpu_agents[agent].computed_path.points);
+      game->cpu_agents[agent].computed_path.points = NULL;
+    }
+
     if (size == 0) {
       game->cpu_agents[agent].state = AGENT_NOTHING;
       il_destroy(list);
@@ -290,10 +318,8 @@ void G_WorkerUpdateAgents(void *data) {
 
     game->cpu_agents[agent].computed_path.count = size;
     game->cpu_agents[agent].computed_path.current = 0;
-    if (game->cpu_agents[agent].computed_path.points) {
-      free(game->cpu_agents[agent].computed_path.points);
-    }
     game->cpu_agents[agent].computed_path.points = calloc(size, sizeof(vec2));
+
     for (unsigned p = 0; p < size; p++) {
       int x = il_get(list, (size - p - 1), 0);
       int y = il_get(list, (size - p - 1), 1);
@@ -340,6 +366,11 @@ void G_WorkerUpdateAgents(void *data) {
       game->cpu_agents[agent].state = AGENT_NOTHING;
       game->gpu_agents[agent].direction[0] = 0.0f;
       game->gpu_agents[agent].direction[1] = 0.0f;
+
+      if (game->cpu_agents[agent].computed_path.points) {
+        free(game->cpu_agents[agent].computed_path.points);
+        game->cpu_agents[agent].computed_path.points = NULL;
+      }
     }
   }
 }
@@ -360,6 +391,10 @@ game_state_t *G_TickGame(client_t *client, game_t *game) {
 
   // destroy previous scene, and load new one
   if (game->next_scene && CL_GetClientState(client) == CLIENT_RUNNING) {
+    G_Scene_End(game, game->current_scene);
+
+    G_Scene_Destroy(game, game->current_scene);
+
     G_Scene_Run(game, game->next_scene);
     free(game->next_scene);
     game->next_scene = NULL;
@@ -460,7 +495,7 @@ game_state_t *G_TickGame(client_t *client, game_t *game) {
     }
 
     if (game->current_scene->current_map != -1) {
-      map_t *the_map = &game->maps[game->current_scene->current_map];
+      map_t *the_map = &game->current_scene->maps[game->current_scene->current_map];
 
       item_text_job_t *jobs = calloc(the_map->h, sizeof(item_text_job_t));
 
@@ -526,25 +561,25 @@ texture_t G_LoadSingleTexture(const char *path) {
 }
 
 int G_Map_Create(game_t *game, unsigned w, unsigned h) {
-  if (game->map_count == 16) {
+  if (game->current_scene->map_count == 16) {
     printf(
         "[ERROR] Max number of map reached (16), who needs that much map???\n");
     return -1;
   }
 
-  VK_CreateMap(game->rend, w, h, game->map_count);
+  VK_CreateMap(game->rend, w, h, game->current_scene->map_count);
 
   // Init the same map accross all workers
   // for (unsigned i = 0; i < game->worker_count; i++) {
   // TODO: the jps map should be per worker
-  map_t *the_map = &game->maps[game->map_count];
+  map_t *the_map = &game->current_scene->maps[game->current_scene->map_count];
   zpl_mutex_lock(&the_map->mutex);
   for (unsigned i = 0; i < 16; i++) {
     the_map->jps_maps[i] = jps_create(w, h);
   }
   the_map->w = w;
   the_map->h = h;
-  the_map->gpu_tiles = VK_GetMap(game->rend, game->map_count);
+  the_map->gpu_tiles = VK_GetMap(game->rend, game->current_scene->map_count);
   the_map->cpu_tiles = calloc(sizeof(cpu_tile_t), w * h);
 
   // Set every single tile to be the default PINK texture (texture == 0)
@@ -554,11 +589,11 @@ int G_Map_Create(game_t *game, unsigned w, unsigned h) {
   // }
 
   if (game->current_scene->current_map == -1) {
-    game->current_scene->current_map = game->map_count;
+    game->current_scene->current_map = game->current_scene->map_count;
   }
 
-  int map = game->map_count;
-  game->map_count++;
+  int map = game->current_scene->map_count;
+  game->current_scene->map_count++;
 
   return map;
 }
@@ -594,12 +629,12 @@ void G_Scene_SetCurrentMap_QC(qcvm_t *qcvm) {
   const char *scene_name = qcvm_get_parm_string(qcvm, 0);
   int map = qcvm_get_parm_int(qcvm, 1);
 
-  if (map < 0 || map >= (int)game->map_count) {
+  if (map < 0 || map >= (int)game->current_scene->map_count) {
     printf("[ERROR] Assertion G_Scene_SetCurrentMap_QC(map >= 0 || map < "
            "game->map_count) "
            "[map = %d, map_count = %d] should be "
            "verified.\n",
-           map, game->map_count);
+           map, game->current_scene->map_count);
     return;
   }
 
@@ -619,12 +654,12 @@ void G_Scene_SetCurrentMap_QC(qcvm_t *qcvm) {
     return;
   }
 
-  zpl_mutex_lock(&game->global_map_mutex);
+  zpl_mutex_lock(&game->current_scene->global_map_mutex);
   zpl_mutex_lock(&scene->scene_mutex);
   scene->current_map = map;
   VK_SetCurrentMap(game->rend, map);
   zpl_mutex_unlock(&scene->scene_mutex);
-  zpl_mutex_unlock(&game->global_map_mutex);
+  zpl_mutex_unlock(&game->current_scene->global_map_mutex);
 }
 
 bool G_Add_Recipes(game_t *game, const char *path, bool required) {
@@ -1157,7 +1192,7 @@ void G_Add_Recipes_QC(qcvm_t *qcvm) {
 
 unsigned G_Item_AddAmount(game_t *game, unsigned map, unsigned x, unsigned y,
                           material_t *the_item, unsigned amount) {
-  map_t *the_map = &game->maps[map];
+  map_t *the_map = &game->current_scene->maps[map];
 
   unsigned idx = y * the_map->w + x;
 
@@ -1211,16 +1246,16 @@ void G_Item_AddAmount_QC(qcvm_t *qcvm) {
   const char *recipe = qcvm_get_parm_string(qcvm, 3);
   float amount = qcvm_get_parm_float(qcvm, 4);
 
-  if (map < 0 || map >= (int)game->map_count) {
+  if (map < 0 || map >= (int)game->current_scene->map_count) {
     printf(
         "[ERROR] Assertion G_Item_AddAmount_QC(map >= 0 || map < game->map_count) "
         "[map = %d, map_count = %d] should be "
         "verified.\n",
-        map, game->map_count);
+        map, game->current_scene->map_count);
     return;
   }
 
-  map_t *the_map = &game->maps[map];
+  map_t *the_map = &game->current_scene->maps[map];
 
   if (x < 0.0f || x >= the_map->w) {
     printf("[ERROR] Assertion G_Item_AddAmount_QC(x >= 0 || x < "
@@ -1306,16 +1341,16 @@ void G_Item_RemoveAmount_QC(qcvm_t *qcvm) {
   const char *recipe = qcvm_get_parm_string(qcvm, 3);
   float amount = qcvm_get_parm_float(qcvm, 4);
 
-  if (map < 0 || map >= (int)game->map_count) {
+  if (map < 0 || map >= (int)game->current_scene->map_count) {
     printf(
         "[ERROR] Assertion G_Item_RemoveAmount_QC(map >= 0 || map < game->map_count) "
         "[map = %d, map_count = %d] should be "
         "verified.\n",
-        map, game->map_count);
+        map, game->current_scene->map_count);
     return;
   }
 
-  map_t *the_map = &game->maps[map];
+  map_t *the_map = &game->current_scene->maps[map];
 
   if (x < 0.0f || x >= the_map->w) {
     printf("[ERROR] Assertion G_Item_RemoveAmount_QC(x >= 0 || x < "
@@ -1383,16 +1418,16 @@ void G_Item_GetAmount_QC(qcvm_t *qcvm) {
   float y = qcvm_get_parm_float(qcvm, 2);
   const char *recipe = qcvm_get_parm_string(qcvm, 3);
 
-  if (map < 0 || map >= (int)game->map_count) {
+  if (map < 0 || map >= (int)game->current_scene->map_count) {
     printf(
         "[ERROR] Assertion G_Item_GetAmount_QC(map >= 0 || map < game->map_count) "
         "[map = %d, map_count = %d] should be "
         "verified.\n",
-        map, game->map_count);
+        map, game->current_scene->map_count);
     return;
   }
 
-  map_t *the_map = &game->maps[map];
+  map_t *the_map = &game->current_scene->maps[map];
 
   if (x < 0.0f || x >= the_map->w) {
     printf("[ERROR] Assertion G_Item_GetAmount_QC(x >= 0 || x < "
@@ -1470,16 +1505,16 @@ void G_Item_FindNearest_QC(qcvm_t *qcvm) {
   const char *recipe = qcvm_get_parm_string(qcvm, 3);
   int start_search = (int)qcvm_get_parm_float(qcvm, 4);
 
-  if (map < 0 || map >= (int)game->map_count) {
+  if (map < 0 || map >= (int)game->current_scene->map_count) {
     printf("[ERROR] Assertion G_Item_FindNearest_QC(map >= 0 || map < "
            "game->map_count) "
            "[map = %d, map_count = %d] should be "
            "verified.\n",
-           map, game->map_count);
+           map, game->current_scene->map_count);
     return;
   }
 
-  map_t *the_map = &game->maps[map];
+  map_t *the_map = &game->current_scene->maps[map];
 
   if (x < 0.0f || x >= the_map->w) {
     printf("[ERROR] Assertion G_Item_FindNearest_QC(x >= 0 || x < "
@@ -1559,16 +1594,16 @@ void G_NeutralAnimal_Add_QC(qcvm_t *qcvm) {
   float y = qcvm_get_parm_float(qcvm, 2);
   const char *recipe = qcvm_get_parm_string(qcvm, 3);
 
-  if (map < 0 || map >= (int)game->map_count) {
+  if (map < 0 || map >= (int)game->current_scene->map_count) {
     printf("[ERROR] Assertion G_NeutralAnimal_Add(map >= 0 || map < "
            "game->map_count) "
            "[map = %d, map_count = %d] should be "
            "verified.\n",
-           map, game->map_count);
+           map, game->current_scene->map_count);
     return;
   }
 
-  map_t *the_map = &game->maps[map];
+  map_t *the_map = &game->current_scene->maps[map];
 
   if (x < 0.0f || x >= the_map->w) {
     printf("[ERROR] Assertion G_NeutralAnimal_Add(x >= 0 || x < "
@@ -1623,16 +1658,16 @@ void G_Colonist_Add_QC(qcvm_t *qcvm) {
   int faction = qcvm_get_parm_int(qcvm, 3);
   const char *recipe = qcvm_get_parm_string(qcvm, 4);
 
-  if (map < 0 || map >= (int)game->map_count) {
+  if (map < 0 || map >= (int)game->current_scene->map_count) {
     printf("[ERROR] Assertion G_Colonist_Add_QC(map >= 0 || map < "
            "game->map_count) "
            "[map = %d, map_count = %d] should be "
            "verified.\n",
-           map, game->map_count);
+           map, game->current_scene->map_count);
     return;
   }
 
-  map_t *the_map = &game->maps[map];
+  map_t *the_map = &game->current_scene->maps[map];
 
   if (x < 0.0f || x >= the_map->w) {
     printf("[ERROR] Assertion G_Colonist_Add_QC(x >= 0 || x < "
@@ -1744,6 +1779,30 @@ void G_Draw_Image_Relative_QC(qcvm_t *qcvm) {
   G_Draw_Image_Relative(game, path, w, h, x, y, z);
 }
 
+void G_Scene_End(game_t *game, scene_t *scene) {
+  if (scene) {
+    for (unsigned j = 0; j < scene->end_listener_count; j++) {
+      qcvm_run(game->qcvms[0], scene->end_listeners[j].qcvm_func);
+    }
+  }
+}
+
+void G_Scene_Destroy(game_t *game, scene_t *scene) {
+  if (scene) {
+    for (unsigned m = 0; m < scene->map_count; m++) {
+      map_t *the_map = &scene->maps[m];
+
+      for (unsigned i = 0; i < 16; i++) {
+        if (the_map->jps_maps[i]) {
+          jps_destroy(the_map->jps_maps[i]);
+        }
+      }
+
+      free(the_map->cpu_tiles);
+    }
+  }
+}
+
 // TODO: G_Prepare_Scene have to be called before calling G_Scene_Run.
 // G_Scene_Run only set the current_scene to be the specified scene. It allows
 // calling an running the start listener while the previous scene still run (for
@@ -1766,15 +1825,6 @@ void G_Scene_Run(game_t *game, const char *scene_name) {
     printf("[ERROR] Current game doesn't have a scene with that name `%s`.\n",
            scene_name);
     return;
-  }
-
-  // First, call all the end listeners in order for the previous scene
-  // The invokation of listeners happens on the same thread that called
-  // G_Scene_Run. I don't know if it's a good idea...
-  if (game->current_scene) {
-    for (unsigned j = 0; j < game->current_scene->end_listener_count; j++) {
-      qcvm_run(game->qcvms[0], game->current_scene->end_listeners[j].qcvm_func);
-    }
   }
 
   // The specified scene become the current scene
@@ -1817,7 +1867,7 @@ void G_WorkerSetupTileText(void *data) {
 
   // worker_t *worker = the_job->worker;
   game_t *game = the_job->game;
-  map_t *the_map = &game->maps[game->current_scene->current_map];
+  map_t *the_map = &game->current_scene->maps[game->current_scene->current_map];
   CL_GetViewDim(game->client, &screen_width, &screen_height);
 
   char amount_str[256];

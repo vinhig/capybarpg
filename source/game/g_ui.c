@@ -8,11 +8,11 @@
 #include <string.h>
 
 static inline __attribute__((always_inline)) char *UI_Translation(game_t *game, unsigned idx) {
-  if (idx >= game->entry_count) {
+  if (idx >= game->localization->entry_count) {
     return "oh no no!";
   }
   // printf("idx == %d\n", idx);
-  return game->translations[game->current_language][idx + 1];
+  return game->localization->translations[game->localization->current_language][idx + 1];
 }
 
 void UI_Begin_Menu_QC(qcvm_t *qcvm) {
@@ -365,7 +365,7 @@ void UI_SetCurrentLanguage_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
   int language_idx = qcvm_get_parm_int(qcvm, 0);
 
-  game->current_language = language_idx;
+  game->localization->current_language = language_idx;
 }
 
 void G_UIInstall(qcvm_t *qcvm) {

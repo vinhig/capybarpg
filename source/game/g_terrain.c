@@ -61,16 +61,16 @@ void G_Map_SetTerrainType_QC(qcvm_t *qcvm) {
   float y = qcvm_get_parm_float(qcvm, 2);
   const char *recipe = qcvm_get_parm_string(qcvm, 3);
 
-  if (map < 0 || map >= (int)game->map_count) {
+  if (map < 0 || map >= (int)game->current_scene->map_count) {
     printf("[ERROR] Assertion G_Map_SetTerrainType(map >= 0 || map < "
            "game->map_count) "
            "[map = %d, map_count = %d] should be "
            "verified.\n",
-           map, game->map_count);
+           map, game->current_scene->map_count);
     return;
   }
 
-  map_t *the_map = &game->maps[map];
+  map_t *the_map = &game->current_scene->maps[map];
 
   if (x < 0.0f || x >= the_map->w) {
     printf("[ERROR] Assertion G_Map_SetTerrainType(x >= 0 || x < "
@@ -124,16 +124,16 @@ void G_Map_GetTerrainType_QC(qcvm_t *qcvm) {
   float x = qcvm_get_parm_float(qcvm, 1);
   float y = qcvm_get_parm_float(qcvm, 2);
 
-  if (map < 0 || map >= (int)game->map_count) {
+  if (map < 0 || map >= (int)game->current_scene->map_count) {
     printf("[ERROR] Assertion G_Map_GetTerrainType_QC(map >= 0 || map < "
            "game->map_count) "
            "[map = %d, map_count = %d] should be "
            "verified.\n",
-           map, game->map_count);
+           map, game->current_scene->map_count);
     return;
   }
 
-  map_t *the_map = &game->maps[map];
+  map_t *the_map = &game->current_scene->maps[map];
 
   if (x < 0.0f || x >= the_map->w) {
     printf("[ERROR] Assertion G_Map_GetTerrainType_QC(x >= 0 || x < "
@@ -252,9 +252,9 @@ void G_Map_AddWall(game_t *game, int map, int x, int y, float health,
   // Since JPS isn't multithread friendly, we maintain a copy in each worker. It
   // forces us to lock and make the modification multiple times. We lock them
   // all to be sure there is not bad surprise.
-  zpl_mutex_lock(&game->maps[map].mutex);
+  zpl_mutex_lock(&game->current_scene->maps[map].mutex);
 
-  map_t *the_map = &game->maps[map];
+  map_t *the_map = &game->current_scene->maps[map];
   for (unsigned i = 0; i < 16; i++) {
     jps_set_obstacle(the_map->jps_maps[i], x, y, 1);
   }
@@ -283,7 +283,7 @@ void G_Map_AddWall(game_t *game, int map, int x, int y, float health,
     }
   }
 
-  zpl_mutex_unlock(&game->maps[map].mutex);
+  zpl_mutex_unlock(&game->current_scene->maps[map].mutex);
 }
 
 void G_Map_AddWall_QC(qcvm_t *qcvm) {
@@ -304,15 +304,15 @@ void G_Map_AddWall_QC(qcvm_t *qcvm) {
     return;
   }
 
-  if (map < 0 || map >= (int)game->map_count) {
+  if (map < 0 || map >= (int)game->current_scene->map_count) {
     printf("[ERROR] Assertion G_Map_AddWall_QC(map >= 0 || map < game->map_count) "
            "[map = %d, map_count = %d] should be "
            "verified.\n",
-           map, game->map_count);
+           map, game->current_scene->map_count);
     return;
   }
 
-  map_t *the_map = &game->maps[map];
+  map_t *the_map = &game->current_scene->maps[map];
 
   zpl_u64 key = zpl_fnv64(recipe, strlen(recipe));
   wall_t *the_wall = G_Walls_get(&game->wall_bank, key);

@@ -427,6 +427,11 @@ void CL_RestartClient(client_t *client) {
 }
 
 void CL_DestroyClient(client_t *client) {
+  CL_Strings_destroy(&client->global_variable_strings);
+  CL_Strings_destroy(&client->global_variable_keys);
+  CL_Floats_destroy(&client->global_variable_floats);
+  CL_Integers_destroy(&client->global_variable_ints);
+  
   CL_DestroyConsole(client, client->console);
   VK_DestroyRend(client->rend);
   SDL_DestroyWindow(client->window);

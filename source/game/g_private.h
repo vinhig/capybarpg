@@ -124,6 +124,12 @@ typedef struct listener_t {
 
 typedef struct scene_t {
   char *name;
+  unsigned id;
+
+  zpl_mutex global_map_mutex;
+  unsigned map_count;
+  map_t maps[16];
+  int current_map;
 
   listener_t start_listeners[16];
   unsigned start_listener_count;
@@ -141,8 +147,16 @@ typedef struct scene_t {
   unsigned agent_think_listener_count;
 
   zpl_mutex scene_mutex;
-  int current_map;
 } scene_t;
+
+typedef struct localization_t {
+  char ***translations;
+  unsigned current_language;
+  unsigned language_count;
+  unsigned entry_count;
+
+  zpl_arena memory;
+} localization_t;
 
 struct game_t {
   vk_system_t *model_matrix_sys;
@@ -189,9 +203,6 @@ struct game_t {
   character_bank_t game_character_bank;
   unsigned char *white_space;
 
-  zpl_mutex global_map_mutex;
-  unsigned map_count;
-
   // Asset banks
   material_bank_t material_bank;
   wall_bank_t wall_bank;
@@ -206,18 +217,13 @@ struct game_t {
   float last_time;
   float delta_time;
 
-  map_t maps[16];
-
   // Hello
   vk_rend_t *rend;
   client_t *client;
 
   char current_ui_style[32];
 
-  char ***translations;
-  unsigned current_language;
-  unsigned language_count;
-  unsigned entry_count;
+  localization_t *localization;
 
   // Thread's ID as given by the OS isn't necessarly an integer in [0-16) range
   // So we keep a record of which os_id (that can be something

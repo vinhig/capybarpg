@@ -5,6 +5,10 @@
 #include <string.h>
 
 void G_LoadTranslation(game_t *game, const char *path) {
+  game->localization = calloc(1, sizeof(localization_t));
+
+  localization_t *localization = game->localization;
+
   char base_path[256];
   sprintf(&base_path[0], "%s/%s", game->base, path);
   FILE *f = fopen(base_path, "r");
@@ -19,12 +23,24 @@ void G_LoadTranslation(game_t *game, const char *path) {
   fseek(f, 0, SEEK_END);
   size_t size = ftell(f);
   fseek(f, 0, SEEK_SET);
-  char *content = calloc(size+1, sizeof(char));
+  char *content = calloc(size + 1, sizeof(char));
   fread(content, 1, size, f);
   content[size] = '\0';
 
+  zpl_arena_init_from_allocator(&localization->memory, zpl_heap_allocator(), size * 2);
+  zpl_allocator allocator = zpl_arena_allocator(&localization->memory);
+
+  // iterate to find the number of lines in the csv
+  // so we won't reallocate during the parsing
+  unsigned language_capacity = 0;
+  for (unsigned c = 0; c < size; c++) {
+    if (content[c] == '\n') {
+      language_capacity++;
+    }
+  }
+  language_capacity += 2;
+
   unsigned language_count = 0;
-  unsigned language_capacity = 16;
   unsigned current_line = 0;
   unsigned cursor = 0;
   unsigned idx = 0;
@@ -48,11 +64,11 @@ void G_LoadTranslation(game_t *game, const char *path) {
           }
         }
 
-        game->translations = calloc(sizeof(char **), language_count);
-        game->language_count = language_count;
+        localization->translations = zpl_alloc(allocator, sizeof(char **) * language_count);
+        localization->language_count = language_count;
 
         for (unsigned j = 0; j < language_count; j++) {
-          game->translations[j] = calloc(sizeof(char *), language_capacity);
+          localization->translations[j] = zpl_alloc(allocator, sizeof(char *) * language_capacity);
         }
 
         printf("[VERBOSE] Translation file `%s` contains %d languages.\n", path, language_count);
@@ -72,9 +88,9 @@ void G_LoadTranslation(game_t *game, const char *path) {
             // printf("\tentry is `%s`\n", tmp_entry);
 
             if (tmp_entry[0] == '"' && tmp_entry[strlen(tmp_entry) - 1] == '"') {
-              game->translations[current_entry][current_line] = strncpy(calloc(strlen(tmp_entry), sizeof(char)), tmp_entry + 1, strlen(tmp_entry) - 2);
+              localization->translations[current_entry][current_line] = strncpy(zpl_alloc(allocator, strlen(tmp_entry) * sizeof(char) + 1), tmp_entry + 1, strlen(tmp_entry) - 2);
             } else {
-              game->translations[current_entry][current_line] = strcpy(malloc(strlen(tmp_entry) + 1), tmp_entry);
+              localization->translations[current_entry][current_line] = strcpy(zpl_alloc(allocator, strlen(tmp_entry) + 1), tmp_entry);
             }
 
             current_entry++;
@@ -89,23 +105,29 @@ void G_LoadTranslation(game_t *game, const char *path) {
       current_line++;
 
       if (current_line == language_capacity) {
-        language_capacity *= 2;
-        for (unsigned j = 0; j < language_count; j++) {
-          game->translations[j] = realloc(game->translations[j], sizeof(char *) * language_capacity);
-        }
+        printf("[ERROR] This is NOT supposed to happen.\n");
+        exit(-1);
+        return;
       }
     }
     idx++;
   }
 
-  game->entry_count = current_line;
+  localization->entry_count = current_line;
 
   printf("ok loading done, let's see what's inside\n");
 
-  for (unsigned i = 0; i < game->entry_count; i++) {
-    printf("%d) %s == %s\n", i, game->translations[0][i], game->translations[1][i]);
+  for (unsigned i = 0; i < localization->entry_count; i++) {
+    printf("%d) %s == %s\n", i, localization->translations[0][i], localization->translations[1][i]);
   }
 
+  free(content);
   free(tmp_line);
   free(tmp_entry);
+}
+
+void G_DestroyTranslation(game_t *game) {
+  zpl_arena_free(&game->localization->memory);
+
+  free(game->localization);
 }
