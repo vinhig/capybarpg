@@ -69,7 +69,9 @@ string G_Get_Last_Asset_Loaded() = #0 : G_Get_Last_Asset_Loaded;
 // Add a listener for their START, UPDATE and END if
 // you want to add, remove or modify a component.
 void G_Scene_Create(string s) = #0;
-void G_Scene_Run(string s) = #0;
+
+// The scene change isn't instant, it'll wait the end of the frame to switch
+void G_Scene_SetNext(string s) = #0;
 
 // If there is a current scene, you can modify its content
 // with the following methods.

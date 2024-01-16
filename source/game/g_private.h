@@ -69,6 +69,7 @@ typedef struct think_job_t {
 typedef struct path_finding_job_t {
   unsigned agent;
   unsigned map;
+  float delta;
   game_t *game;
 } path_finding_job_t;
 
@@ -165,6 +166,7 @@ struct game_t {
   unsigned scene_count;
   unsigned scene_capacity;
 
+  // Scene change happens at the end of a frame
   char *next_scene;
   scene_t *current_scene;
 

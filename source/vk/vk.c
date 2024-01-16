@@ -1104,8 +1104,6 @@ void VK_Draw(client_t *client, vk_rend_t *rend, game_state_t *game) {
     }
   }
 
-  qsort(tmps, rend->ecs->entity_count, sizeof(depth_entry_t), VK_OrderDepth);
-
   for (unsigned j = 0; j < rend->ecs->entity_count; j++) {
     ((unsigned *)rend->ecs->instances)[j] = tmps[j].entity;
   }

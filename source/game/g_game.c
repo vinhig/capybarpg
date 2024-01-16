@@ -19,6 +19,7 @@
 #include <string.h>
 #include <sys/time.h>
 #include <time.h>
+#include <tracy/TracyC.h>
 #include <unistd.h>
 #include <vk/vk_vulkan.h>
 
@@ -26,6 +27,8 @@ void G_WorkerRegisterThread(void *data);
 void G_WorkerSetupTileText(void *data);
 void G_WorkerLoadTexture(void *data);
 void G_WorkerLoadFont(void *data);
+
+void G_Scene_Run(game_t *game, const char *scene_name);
 
 void My_ImGui_NewFrame(client_t *client);
 
@@ -256,6 +259,7 @@ void G_WorkerThinkAgent(void *data) {
 
 void G_WorkerUpdateAgents(void *data) {
   path_finding_job_t *the_job = data;
+  float delta = the_job->delta / 0.01666666;
   game_t *game = the_job->game;
   unsigned agent = the_job->agent;
   map_t *the_map = &game->maps[the_job->map];
@@ -310,8 +314,8 @@ void G_WorkerUpdateAgents(void *data) {
       glm_vec2_sub(next_pos, game->transforms[agent].position, d);
       vec2 s;
       glm_vec2_sign(d, s);
-      d[0] = glm_min(fabs(d[0]), game->cpu_agents[agent].speed) * s[0];
-      d[1] = glm_min(fabs(d[1]), game->cpu_agents[agent].speed) * s[1];
+      d[0] = glm_min(fabs(d[0]), game->cpu_agents[agent].speed * delta) * s[0];
+      d[1] = glm_min(fabs(d[1]), game->cpu_agents[agent].speed * delta) * s[1];
 
       // Reflect the direction on the related GPU agent
       // Visual and Animation is supposed to change
@@ -353,6 +357,13 @@ void G_ResetGameState(game_t *game) {
 
 game_state_t *G_TickGame(client_t *client, game_t *game) {
   G_ResetGameState(game);
+
+  // destroy previous scene, and load new one
+  if (game->next_scene && CL_GetClientState(client) == CLIENT_RUNNING) {
+    G_Scene_Run(game, game->next_scene);
+    free(game->next_scene);
+    game->next_scene = NULL;
+  }
 
   if (CL_GetClientState(client) == CLIENT_RUNNING) {
     VK_BeginUI(client);
@@ -433,6 +444,7 @@ game_state_t *G_TickGame(client_t *client, game_t *game) {
           path_finding_jobs[i] = (path_finding_job_t){
               .agent = i,
               .game = game,
+              .delta = game->delta_time,
               .map = game->current_scene->current_map,
           };
           zpl_jobs_enqueue(&game->job_sys, G_WorkerUpdateAgents, &path_finding_jobs[agent_idx]);
@@ -1736,6 +1748,8 @@ void G_Draw_Image_Relative_QC(qcvm_t *qcvm) {
 // G_Scene_Run only set the current_scene to be the specified scene. It allows
 // calling an running the start listener while the previous scene still run (for
 // example, to let the loading animation be performed).
+// TODO: G_Scene_Run should be called at the beginning or at the end of
+// a game tick.
 void G_Scene_Run(game_t *game, const char *scene_name) {
   printf("G_Scene_Run(\"%s\") TODO: should make sure this is call from the main thread;\n", scene_name);
 
@@ -1772,12 +1786,12 @@ void G_Scene_Run(game_t *game, const char *scene_name) {
   }
 }
 
-void G_Scene_Run_QC(qcvm_t *qcvm) {
+void G_Scene_SetNext_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
 
   const char *scene_name = qcvm_get_parm_string(qcvm, 0);
 
-  G_Scene_Run(game, scene_name);
+  game->next_scene = strcpy(malloc(strlen(scene_name) + 1), scene_name);
 }
 
 const vec2 offsets_1[3] = {
@@ -2655,9 +2669,9 @@ void G_QCVMInstall(qcvm_t *qcvm) {
       .args[0] = {.name = "s", .type = QCVM_STRING},
   };
 
-  qcvm_export_t export_G_Scene_Run = {
-      .func = G_Scene_Run_QC,
-      .name = "G_Scene_Run",
+  qcvm_export_t export_G_Scene_SetNext = {
+      .func = G_Scene_SetNext_QC,
+      .name = "G_Scene_SetNext",
       .argc = 1,
       .args[0] = {.name = "s", .type = QCVM_STRING},
   };
@@ -2868,7 +2882,7 @@ void G_QCVMInstall(qcvm_t *qcvm) {
   qcvm_add_export(qcvm, &export_G_Load_Game);
   qcvm_add_export(qcvm, &export_G_Get_Last_Asset_Loaded);
   qcvm_add_export(qcvm, &export_G_Scene_Create);
-  qcvm_add_export(qcvm, &export_G_Scene_Run);
+  qcvm_add_export(qcvm, &export_G_Scene_SetNext);
   qcvm_add_export(qcvm, &export_G_Map_Create);
   qcvm_add_export(qcvm, &export_G_Add_Listener);
   qcvm_add_export(qcvm, &export_G_Draw_Image_Relative);

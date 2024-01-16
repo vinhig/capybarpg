@@ -19,8 +19,9 @@ void G_LoadTranslation(game_t *game, const char *path) {
   fseek(f, 0, SEEK_END);
   size_t size = ftell(f);
   fseek(f, 0, SEEK_SET);
-  char *content = calloc(size, sizeof(char));
+  char *content = calloc(size+1, sizeof(char));
   fread(content, 1, size, f);
+  content[size] = '\0';
 
   unsigned language_count = 0;
   unsigned language_capacity = 16;

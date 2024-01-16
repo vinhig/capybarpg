@@ -1,7 +1,23 @@
 # , 'b_lundef=false', 'b_sanitize=address,undefined'
 project('maidenless', 'c', 'cpp',
   version : '0.1',
-  default_options : ['warning_level=3', 'c_std=gnu11', 'cpp_std=c++17'])
+  default_options : ['warning_level=3', 'c_std=gnu11', 'cpp_std=c++17', 'b_lto=true'])
+
+add_global_arguments(
+  '-Wall',
+  '-Wno-pedantic',
+  '-Wno-unused-parameter',
+  '-Wno-nullability-extension',
+  language: 'c',
+)
+
+# CPP files aren't my code, don't want to mess with the warnings
+add_global_arguments(
+  '-w',
+  '-Wno-nullability-extension',
+  language: 'cpp',
+)
+
 
 cc = meson.get_compiler('c')
 m = cc.find_library('m', required : false)
@@ -20,21 +36,6 @@ if build_machine.system() == 'darwin'
 else
     vulkan = dependency('vulkan')
 endif
-
-add_global_arguments(
-  '-Wall',
-  '-Wno-pedantic',
-  '-Wno-unused-parameter',
-  '-Wno-nullability-extension',
-  language: 'c',
-)
-
-# CPP files aren't my code, don't want to mess with the warnings
-add_global_arguments(
-  '-w',
-  '-Wno-nullability-extension',
-  language: 'cpp',
-)
 
 glsllang = find_program('glslangValidator')
 
