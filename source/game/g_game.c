@@ -604,7 +604,6 @@ void G_Scene_SetCurrentMap_QC(qcvm_t *qcvm) {
     }
   }
 
-#ifndef DONT_BUILD_ASSERTION
   if (map < 0 || map >= (int)game->current_scene->map_count) {
     printf("[ERROR] Assertion G_Scene_SetCurrentMap_QC(map >= 0 || map < "
            "game->map_count) "
@@ -620,7 +619,6 @@ void G_Scene_SetCurrentMap_QC(qcvm_t *qcvm) {
            scene_name);
     return;
   }
-#endif
 
   zpl_mutex_lock(&game->current_scene->global_map_mutex);
   zpl_mutex_lock(&scene->scene_mutex);
@@ -1214,7 +1212,6 @@ void G_Item_AddAmount_QC(qcvm_t *qcvm) {
   const char *recipe = qcvm_get_parm_string(qcvm, 3);
   float amount = qcvm_get_parm_float(qcvm, 4);
 
-#ifndef DONT_BUILD_ASSERTION
   if (map < 0 || map >= (int)game->current_scene->map_count) {
     printf(
         "[ERROR] Assertion G_Item_AddAmount_QC(map >= 0 || map < game->map_count) "
@@ -1243,12 +1240,10 @@ void G_Item_AddAmount_QC(qcvm_t *qcvm) {
            (unsigned)x, the_map->h);
     return;
   }
-#endif
 
   zpl_u64 key = zpl_fnv64(recipe, strlen(recipe));
   material_t *the_item = G_Materials_get(&game->material_bank, key);
 
-#ifndef DONT_BUILD_ASSERTION
   if (!the_item) {
     printf("[ERROR] Assertion G_Item_AddAmount_QC(recipe exists) [recipe = \"%s\"] "
            "should be verified.\n",
@@ -1263,7 +1258,6 @@ void G_Item_AddAmount_QC(qcvm_t *qcvm) {
            amount);
     return;
   }
-#endif
 
   float placed = G_Item_AddAmount(game, map, x, y, the_item, (unsigned)amount);
 
@@ -1313,7 +1307,6 @@ void G_Item_RemoveAmount_QC(qcvm_t *qcvm) {
   const char *recipe = qcvm_get_parm_string(qcvm, 3);
   float amount = qcvm_get_parm_float(qcvm, 4);
 
-#ifndef DONT_BUILD_ASSERTION
   if (map < 0 || map >= (int)game->current_scene->map_count) {
     printf(
         "[ERROR] Assertion G_Item_RemoveAmount_QC(map >= 0 || map < game->map_count) "
@@ -1322,11 +1315,9 @@ void G_Item_RemoveAmount_QC(qcvm_t *qcvm) {
         map, game->current_scene->map_count);
     return;
   }
-#endif
 
   map_t *the_map = &game->current_scene->maps[map];
 
-#ifndef DONT_BUILD_ASSERTION
   if (x < 0.0f || x >= the_map->w) {
     printf("[ERROR] Assertion G_Item_RemoveAmount_QC(x >= 0 || x < "
            "map->w) "
@@ -1344,12 +1335,10 @@ void G_Item_RemoveAmount_QC(qcvm_t *qcvm) {
            (unsigned)x, the_map->h);
     return;
   }
-#endif
 
   zpl_u64 key = zpl_fnv64(recipe, strlen(recipe));
   material_t *the_item = G_Materials_get(&game->material_bank, key);
 
-#ifndef DONT_BUILD_ASSERTION
   if (!the_item) {
     printf("[ERROR] Assertion G_Item_RemoveAmount_QC(recipe exists) [recipe = \"%s\"] "
            "should be verified.\n",
@@ -1364,7 +1353,6 @@ void G_Item_RemoveAmount_QC(qcvm_t *qcvm) {
            amount);
     return;
   }
-#endif
 
   unsigned idx = y * the_map->w + x;
 
@@ -1399,7 +1387,6 @@ void G_Item_GetAmount_QC(qcvm_t *qcvm) {
   zpl_u64 key = zpl_fnv64(recipe, strlen(recipe));
   material_t *the_item = G_Materials_get(&game->material_bank, key);
 
-#ifndef DONT_BUILD_ASSERTION
   if (map < 0 || map >= (int)game->current_scene->map_count) {
     printf(
         "[ERROR] Assertion G_Item_GetAmount_QC(map >= 0 || map < game->map_count) "
@@ -1409,11 +1396,8 @@ void G_Item_GetAmount_QC(qcvm_t *qcvm) {
     return;
   }
 
-#endif
-
   map_t *the_map = &game->current_scene->maps[map];
 
-#ifndef DONT_BUILD_ASSERTION
   if (x < 0.0f || x >= the_map->w) {
     printf("[ERROR] Assertion G_Item_GetAmount_QC(x >= 0 || x < "
            "map->w) "
@@ -1438,7 +1422,6 @@ void G_Item_GetAmount_QC(qcvm_t *qcvm) {
            recipe);
     return;
   }
-#endif
 
   unsigned idx = y * the_map->w + x;
 
@@ -1488,7 +1471,6 @@ void G_Item_FindNearest_QC(qcvm_t *qcvm) {
   const char *recipe = qcvm_get_parm_string(qcvm, 3);
   int start_search = (int)qcvm_get_parm_float(qcvm, 4);
 
-#ifndef DONT_BUILD_ASSERTION
   if (map < 0 || map >= (int)game->current_scene->map_count) {
     printf("[ERROR] Assertion G_Item_FindNearest_QC(map >= 0 || map < "
            "game->map_count) "
@@ -1497,11 +1479,9 @@ void G_Item_FindNearest_QC(qcvm_t *qcvm) {
            map, game->current_scene->map_count);
     return;
   }
-#endif
 
   map_t *the_map = &game->current_scene->maps[map];
 
-#ifndef DONT_BUILD_ASSERTION
   if (x < 0.0f || x >= the_map->w) {
     printf("[ERROR] Assertion G_Item_FindNearest_QC(x >= 0 || x < "
            "map->w) "
@@ -1519,12 +1499,10 @@ void G_Item_FindNearest_QC(qcvm_t *qcvm) {
            (unsigned)y, the_map->h);
     return;
   }
-#endif
 
   zpl_u64 key = zpl_fnv64(recipe, strlen(recipe));
   material_t *the_material = G_Materials_get(&game->material_bank, key);
 
-#ifndef DONT_BUILD_ASSERTION
   if (!the_material) {
     printf("[ERROR] Assertion G_Item_FindNearest_QC(recipe exists) [recipe = "
            "\"%s\"] "
@@ -1532,7 +1510,6 @@ void G_Item_FindNearest_QC(qcvm_t *qcvm) {
            recipe);
     return;
   }
-#endif
 
   // TODO: this part needs a major rework, but it's unlikely that
   // a player can have more than 64 stacks of the same material
@@ -1582,7 +1559,6 @@ void G_NeutralAnimal_Add_QC(qcvm_t *qcvm) {
   float y = qcvm_get_parm_float(qcvm, 2);
   const char *recipe = qcvm_get_parm_string(qcvm, 3);
 
-#ifndef DONT_BUILD_ASSERTION
   int map = qcvm_get_parm_int(qcvm, 0);
   if (map < 0 || map >= (int)game->current_scene->map_count) {
     printf("[ERROR] Assertion G_NeutralAnimal_Add(map >= 0 || map < "
@@ -1612,12 +1588,10 @@ void G_NeutralAnimal_Add_QC(qcvm_t *qcvm) {
            (unsigned)y, the_map->h);
     return;
   }
-#endif
 
   zpl_u64 key = zpl_fnv64(recipe, strlen(recipe));
   pawn_t *the_pawn = G_Pawns_get(&game->pawn_bank, key);
 
-#ifndef DONT_BUILD_ASSERTION
   if (!the_pawn) {
     printf("[ERROR] Assertion G_NeutralAnimal_Add(recipe exists) [recipe = "
            "\"%s\"] "
@@ -1625,7 +1599,6 @@ void G_NeutralAnimal_Add_QC(qcvm_t *qcvm) {
            recipe);
     return;
   }
-#endif
 
   struct Transform transform = {
       .position = {x, y},
@@ -1650,7 +1623,6 @@ void G_Colonist_Add_QC(qcvm_t *qcvm) {
   int faction = qcvm_get_parm_int(qcvm, 3);
   const char *recipe = qcvm_get_parm_string(qcvm, 4);
 
-#ifndef DONT_BUILD_ASSERTION
   int map = qcvm_get_parm_int(qcvm, 0);
   if (map < 0 || map >= (int)game->current_scene->map_count) {
     printf("[ERROR] Assertion G_Colonist_Add_QC(map >= 0 || map < "
@@ -1680,12 +1652,10 @@ void G_Colonist_Add_QC(qcvm_t *qcvm) {
            (unsigned)y, the_map->h);
     return;
   }
-#endif
 
   zpl_u64 key = zpl_fnv64(recipe, strlen(recipe));
   pawn_t *the_pawn = G_Pawns_get(&game->pawn_bank, key);
 
-#ifndef DONT_BUILD_ASSERTION
   if (!the_pawn) {
     printf("[ERROR] Assertion G_Colonist_Add_QC(recipe exists) [recipe = "
            "\"%s\"] "
@@ -1693,7 +1663,6 @@ void G_Colonist_Add_QC(qcvm_t *qcvm) {
            recipe);
     return;
   }
-#endif
 
   struct Transform transform = {
       .position = {x, y},

@@ -5,7 +5,6 @@ project('maidenless', 'c', 'cpp',
 
 if get_option('buildtype') == 'custom'
   add_global_arguments('-Ofast', '-g3', language : 'c')
-  add_global_arguments('-DDONT_BUILD_ASSERTION', language : 'c')
   add_global_arguments('-Ofast', '-g3', language : 'cpp')
 endif
 
