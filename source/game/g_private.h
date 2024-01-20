@@ -1,5 +1,6 @@
 #pragma once
 
+#include "common/c_job.h"
 #include <client/cl_client.h>
 #include <game/g_game.h>
 #include <vk/vk_system.h>
@@ -170,7 +171,7 @@ struct game_t {
   unsigned *entities;
 
   unsigned worker_count;
-  zpl_jobs_system job_sys;
+  job_system_t* job_sys2;
 
   qcvm_t *qcvms[16];
 
@@ -224,17 +225,6 @@ struct game_t {
   char current_ui_style[32];
 
   localization_t *localization;
-
-  // Thread's ID as given by the OS isn't necessarly an integer in [0-16) range
-  // So we keep a record of which os_id (that can be something
-  // like -176183616) corresponds to which local_id [0-16)
-  // The local_id is used to index data structures that can't
-  // be accessed by different threads (like qcvm_t or the jps map).
-  struct {
-    unsigned os_id;
-  } thread_ids[16];
-  atomic_int registered_thread_idx;
-  zpl_mutex thread_ids_mutex;
 };
 
 void G_CommonInstall(qcvm_t *qcvm);

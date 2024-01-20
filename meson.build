@@ -1,7 +1,7 @@
 # , 'b_lundef=false', 'b_sanitize=address,undefined'
 project('maidenless', 'c', 'cpp',
   version : '0.1',
-  default_options : ['warning_level=3', 'c_std=gnu11', 'cpp_std=c++17', 'b_lundef=false', 'b_sanitize=address,undefined'])
+  default_options : ['warning_level=3', 'c_std=gnu11', 'cpp_std=c++17', 'b_lto=true'])
 
 add_global_arguments(
   '-Wall',
@@ -166,6 +166,8 @@ exe = executable('maidenless',
   'source/vk/vk_gbuffer.c',
   'source/vk/vk_immediate.c',
   'source/vk/vk_system.c',
+
+  'source/common/c_job.c',
 
   'external/zpl/zpl_implementation.c',
   'external/vk_mem_alloc.cpp',

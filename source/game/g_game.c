@@ -1,5 +1,6 @@
 #include "cimgui.h"
 #include "client/cl_client.h"
+#include "common/c_job.h"
 #include <cglm/mat4.h>
 #include <cglm/util.h>
 #include <client/cl_input.h>
@@ -23,10 +24,10 @@
 #include <unistd.h>
 #include <vk/vk_vulkan.h>
 
-void G_WorkerRegisterThread(void *data);
-void G_WorkerSetupTileText(void *data);
-void G_WorkerLoadTexture(void *data);
-void G_WorkerLoadFont(void *data);
+void G_WorkerRegisterThread(void *data, unsigned thread_idx);
+void G_WorkerSetupTileText(void *data, unsigned thread_idx);
+void G_WorkerLoadTexture(void *data, unsigned thread_idx);
+void G_WorkerLoadFont(void *data, unsigned thread_idx);
 
 void G_Scene_Run(game_t *game, const char *scene_name);
 // logically end the given scene, doesn't free anything
@@ -70,19 +71,7 @@ game_t *G_CreateGame(client_t *client, char *base) {
   // The workers[0] is actually the main thread ok?
   game->worker_count = (af.thread_count / 2) + 1;
 
-  zpl_jobs_init_with_limit(&game->job_sys, zpl_heap_allocator(),
-                           game->worker_count, 10000);
-
-  zpl_mutex_init(&game->thread_ids_mutex);
-  zpl_mutex_lock(&game->thread_ids_mutex);
-
-  for (unsigned i = 0; i < game->worker_count; i++) {
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerRegisterThread, game);
-  }
-
-  zpl_jobs_process(&game->job_sys);
-
-  zpl_mutex_unlock(&game->thread_ids_mutex);
+  game->job_sys2 = C_JobSystemCreate(game->worker_count);
 
   zpl_affinity_destroy(&af);
 
@@ -218,7 +207,7 @@ void G_DestroyGame(game_t *game) {
 
   G_Scene_Destroy(game, game->current_scene);
 
-  zpl_jobs_free(&game->job_sys);
+  C_JobSystemDestroy(game->job_sys2);
 
   FT_Done_Face(game->console_face);
   FT_Done_Face(game->game_face);
@@ -230,45 +219,12 @@ void G_DestroyGame(game_t *game) {
   free(game);
 }
 
-void G_WorkerRegisterThread(void *data) {
-  game_t *game = data;
-  unsigned os_id = zpl_thread_current_id();
-
-  for (unsigned i = 0; i < 16; i++) {
-    if (game->thread_ids[i].os_id == os_id) {
-      printf("Already registered thread %d. Let's pray together our Lord and Savior.\n", i);
-      abort();
-      return;
-    }
-  }
-
-  int my_idx = atomic_fetch_add(&game->registered_thread_idx, 1);
-  game->thread_ids[my_idx].os_id = os_id;
-
-  zpl_mutex_lock(&game->thread_ids_mutex);
-  zpl_mutex_unlock(&game->thread_ids_mutex);
-}
-
-unsigned G_GetThreadId(game_t *game, unsigned os_id) {
-  for (unsigned i = 0; i < 16; i++) {
-    if (game->thread_ids[i].os_id == os_id) {
-      return i;
-    }
-  }
-
-  printf("G_GetThreadId was called from an unregistred thread. Something went super wrong...\n");
-  printf("Let's abort and pray together.\n");
-  abort();
-}
-
-void G_WorkerThinkAgent(void *data) {
+void G_WorkerThinkAgent(void *data, unsigned thread_idx) {
   think_job_t *job = data;
   game_t *game = job->game;
   unsigned agent = job->agent;
 
-  unsigned thread_id = G_GetThreadId(game, zpl_thread_current_id());
-
-  qcvm_t *qcvm = game->qcvms[thread_id];
+  qcvm_t *qcvm = game->qcvms[thread_idx];
 
   for (unsigned t = 0; t < game->current_scene->agent_think_listener_count; t++) {
     qcvm_set_parm_int(qcvm, 0, game->current_scene->current_map);
@@ -281,7 +237,7 @@ void G_WorkerThinkAgent(void *data) {
   }
 }
 
-void G_WorkerUpdateAgents(void *data) {
+void G_WorkerUpdateAgents(void *data, unsigned thread_idx) {
   path_finding_job_t *the_job = data;
   float delta = the_job->delta / 0.01666666;
   game_t *game = the_job->game;
@@ -289,11 +245,7 @@ void G_WorkerUpdateAgents(void *data) {
   map_t *the_map = &game->current_scene->maps[the_job->map];
 
   if (game->cpu_agents[agent].state == AGENT_PATH_FINDING) {
-    // Find a jps_map that is available hehe
-    // That's called lock free stuffy stuff
-    unsigned thread_id = G_GetThreadId(game, zpl_thread_current_id());
-
-    struct map *jps_map = the_map->jps_maps[thread_id];
+    struct map *jps_map = the_map->jps_maps[thread_idx];
 
     jps_set_start(jps_map, game->transforms[agent].position[0],
                   game->transforms[agent].position[1]);
@@ -459,13 +411,12 @@ game_state_t *G_TickGame(client_t *client, game_t *game) {
               .agent = agent_idx,
               .game = game,
           };
-          zpl_jobs_enqueue(&game->job_sys, G_WorkerThinkAgent, &think_jobs[agent_idx]);
+          C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerThinkAgent, .data = &think_jobs[agent_idx]});
           agent_idx++;
         }
       }
 
-      while (!zpl_jobs_done(&game->job_sys)) {
-        zpl_jobs_process(&game->job_sys);
+      while (!C_JobSystemAllDone(game->job_sys2)) {
       };
 
       free(think_jobs);
@@ -482,13 +433,12 @@ game_state_t *G_TickGame(client_t *client, game_t *game) {
               .delta = game->delta_time,
               .map = game->current_scene->current_map,
           };
-          zpl_jobs_enqueue(&game->job_sys, G_WorkerUpdateAgents, &path_finding_jobs[agent_idx]);
+          C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerUpdateAgents, .data = &path_finding_jobs[agent_idx]});
           agent_idx++;
         }
       }
 
-      while (!zpl_jobs_done(&game->job_sys)) {
-        zpl_jobs_process(&game->job_sys);
+      while (!C_JobSystemAllDone(game->job_sys2)) {
       };
 
       free(path_finding_jobs);
@@ -505,11 +455,10 @@ game_state_t *G_TickGame(client_t *client, game_t *game) {
             .game = game,
         };
 
-        zpl_jobs_enqueue(&game->job_sys, G_WorkerSetupTileText, &jobs[row]);
+        C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerSetupTileText, .data = &jobs[row]});
       }
 
-      while (!zpl_jobs_done(&game->job_sys)) {
-        zpl_jobs_process(&game->job_sys);
+      while (!C_JobSystemAllDone(game->job_sys2)) {
       };
 
       free(jobs);
@@ -1860,7 +1809,7 @@ const vec2 offsets_3[3] = {
     {0.80, 0.76},
 };
 
-void G_WorkerSetupTileText(void *data) {
+void G_WorkerSetupTileText(void *data, unsigned thread_idx) {
   unsigned screen_width, screen_height;
 
   item_text_job_t *the_job = data;
@@ -1969,7 +1918,7 @@ void G_WorkerSetupTileText(void *data) {
   }
 }
 
-void G_WorkerLoadFont(void *data) {
+void G_WorkerLoadFont(void *data, unsigned thread_idx) {
   font_job_t *the_job = data;
   game_t *game = the_job->game;
 
@@ -2064,7 +2013,7 @@ void G_WorkerLoadFont(void *data) {
   zpl_mutex_unlock(&game->font_mutex);
 }
 
-void G_WorkerLoadTexture(void *data) {
+void G_WorkerLoadTexture(void *data, unsigned thread_idx) {
   texture_job_t *the_job = data;
   game_t *game = the_job->game;
 
@@ -2121,8 +2070,10 @@ void G_Load_Game(game_t *game) {
       .path = "../source/resources/InterDisplay-ExtraBold.ttf",
   };
 
-  zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadFont, &font_job_console);
-  zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadFont, &font_job_game);
+  C_JobSystemEnqueue(game->job_sys2, (job_t){
+                                         .proc = G_WorkerLoadFont, .data = &font_job_console});
+  C_JobSystemEnqueue(game->job_sys2, (job_t){
+                                         .proc = G_WorkerLoadFont, .data = &font_job_game});
 
   texture_job_t *texture_jobs =
       calloc(zpl_array_count(game->material_bank.entries) * 3 +
@@ -2154,9 +2105,9 @@ void G_Load_Game(game_t *game) {
         .path = mat->full_stack_path,
     };
 
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, low_stack_job);
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, half_stack_job);
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, full_stack_job);
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = low_stack_job});
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = half_stack_job});
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = full_stack_job});
   }
 
   unsigned offset = zpl_array_count(game->material_bank.entries) * 3;
@@ -2262,22 +2213,22 @@ void G_Load_Game(game_t *game) {
         .path = wall->nothing_path,
     };
 
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, only_left_job);
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, only_right_job);
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, only_top_job);
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, only_bottom_job);
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, all_job);
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, left_right_bottom_job);
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, left_right_job);
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, left_right_top_job);
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, top_bottom_job);
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, right_top_job);
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, left_top_job);
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, right_bottom_job);
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, left_bottom_job);
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, left_top_bottom_job);
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, right_top_bottom_job);
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, nothing_job);
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = only_left_job});
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = only_right_job});
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = only_top_job});
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = only_bottom_job});
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = all_job});
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = left_right_bottom_job});
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = left_right_job});
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = left_right_top_job});
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = top_bottom_job});
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = right_top_job});
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = left_top_job});
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = right_bottom_job});
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = left_bottom_job});
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = left_top_bottom_job});
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = right_top_bottom_job});
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = nothing_job});
   }
 
   offset += zpl_array_count(game->wall_bank.entries) * 16;
@@ -2305,9 +2256,9 @@ void G_Load_Game(game_t *game) {
         .path = terrain->variant3_path,
     };
 
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, variant1_job);
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, variant2_job);
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, variant3_job);
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = variant1_job});
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = variant2_job});
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = variant3_job});
   }
 
   offset += zpl_array_count(game->terrain_bank.entries) * 3;
@@ -2335,14 +2286,12 @@ void G_Load_Game(game_t *game) {
         .path = pawn->east_path,
     };
 
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, north_job);
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, south_job);
-    zpl_jobs_enqueue(&game->job_sys, G_WorkerLoadTexture, east_job);
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = north_job});
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = south_job});
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = east_job});
   }
 
-  while (!zpl_jobs_done(&game->job_sys)) {
-    zpl_jobs_process(&game->job_sys);
-
+  while (!C_JobSystemAllDone(game->job_sys2)) {
     game_state_t *state = G_TickGame(game->client, game);
 
     CL_DrawClient(game->client, game, state);

@@ -115,12 +115,6 @@ void G_LoadTranslation(game_t *game, const char *path) {
 
   localization->entry_count = current_line;
 
-  printf("ok loading done, let's see what's inside\n");
-
-  for (unsigned i = 0; i < localization->entry_count; i++) {
-    printf("%d) %s == %s\n", i, localization->translations[0][i], localization->translations[1][i]);
-  }
-
   free(content);
   free(tmp_line);
   free(tmp_entry);
