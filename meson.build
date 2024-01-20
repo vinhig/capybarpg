@@ -3,6 +3,12 @@ project('maidenless', 'c', 'cpp',
   version : '0.1',
   default_options : ['warning_level=3', 'c_std=gnu11', 'cpp_std=c++17', 'b_lto=true'])
 
+if get_option('buildtype') == 'custom'
+  add_global_arguments('-Ofast', '-g3', language : 'c')
+  add_global_arguments('-DDONT_BUILD_ASSERTION', language : 'c')
+  add_global_arguments('-Ofast', '-g3', language : 'cpp')
+endif
+
 add_global_arguments(
   '-Wall',
   '-Wno-pedantic',
@@ -41,28 +47,28 @@ glsllang = find_program('glslangValidator')
 
 vcc = find_program('vcc')
 
-chad_shader_targets = []
+# chad_shader_targets = []
 
-chad_shaders = [
-  'source/shaders/immediate.vert.c',
-  'source/shaders/immediate.frag.c',
-  # 'source/shaders/text.frag.c',
-]
+# chad_shaders = [
+#   'source/shaders/immediate.vert.c',
+#   'source/shaders/immediate.frag.c',
+#   # 'source/shaders/text.frag.c',
+# ]
 
-foreach s : chad_shaders
-  target_name = '@0@.spv'.format(s).split('/')
-  chad_shaders += custom_target(
-    target_name.get(target_name.length()-1),
-    command : [vcc, '--entry-point', 'main', '--no-dynamic-scheduling', '--execution-model', 'Fragment', '@INPUT@', '-o', '@OUTPUT@'],
-    build_by_default: true,
-    input : s, 
-    output : '@BASENAME@.spv'
-  )
-endforeach
+# foreach s : chad_shaders
+#   target_name = '@0@.spv'.format(s).split('/')
+#   chad_shaders += custom_target(
+#     target_name.get(target_name.length()-1),
+#     command : [vcc, '--entry-point', 'main', '--no-dynamic-scheduling', '--execution-model', 'Fragment', '@INPUT@', '-o', '@OUTPUT@'],
+#     build_by_default: true,
+#     input : s, 
+#     output : '@BASENAME@.spv'
+#   )
+# endforeach
 
-chad_shaders = declare_dependency(
-  sources: chad_shader_targets
-)
+# chad_shaders = declare_dependency(
+#   sources: chad_shader_targets
+# )
 
 shader_targets = []
 
@@ -71,6 +77,8 @@ shaders = [
   'source/shaders/gbuffer.frag.glsl',
   'source/shaders/text.vert.glsl',
   'source/shaders/text.frag.glsl',
+  'source/shaders/immediate.vert.glsl',
+  'source/shaders/immediate.frag.glsl',
   # 'source/shaders/shading.comp.glsl',
   'source/shaders/systems/model_matrix_frustum.comp.glsl',
   # 'source/shaders/systems/path_finding.comp.glsl',
@@ -168,6 +176,7 @@ exe = executable('maidenless',
   'source/vk/vk_system.c',
 
   'source/common/c_job.c',
+  'source/common/c_profiler.c',
 
   'external/zpl/zpl_implementation.c',
   'external/vk_mem_alloc.cpp',
@@ -187,5 +196,5 @@ exe = executable('maidenless',
     include_directories('external/qclib/')
   ],
   link_with: [qcvm, imgui],
-  dependencies: [sdl2, opengl, vulkan, freetype, dl, m, shaders, images, chad_shaders]
+  dependencies: [sdl2, opengl, vulkan, freetype, dl, m, shaders, images]
 )

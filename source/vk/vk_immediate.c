@@ -1,4 +1,5 @@
 #include "client/cl_client.h"
+#include "common/c_profiler.h"
 #include "vk/vk_private.h"
 #include "vk/vk_system.h"
 #include "vk/vk_vulkan.h"
@@ -542,6 +543,7 @@ void VK_DrawImmediate(client_t *client, vk_rend_t *rend, game_state_t *state) {
   }
 
   if (CL_GetClientState(client) == CLIENT_RUNNING) {
+    C_ProfilerDisplay();
     VK_DrawUI(rend, cmd);
   }
 

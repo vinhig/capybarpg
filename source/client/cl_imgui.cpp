@@ -160,7 +160,7 @@ void ImGui_ProcessEvent(client_t *client, SDL_Event *event) {
   ImGui_ImplSDL2_ProcessEvent(event);
 }
 
-void VK_DestroyUI(vk_rend_t* rend) {
+void VK_DestroyUI(vk_rend_t *rend) {
   ImGui_ImplVulkan_Shutdown();
   ImGui_ImplSDL2_Shutdown();
 

@@ -3,12 +3,15 @@
 #include <string.h>
 
 #include "client/cl_client.h"
+#include "common/c_profiler.h"
 #include "game/g_game.h"
 
 #define VERSION "0.1"
 
 int main(int argc, char **argv) {
   printf("Creating client using Maidenless Engine `%s`.\n", VERSION);
+
+  C_ProfilerInit();
 
   // Keep the client description as default, so the config file/command line arguments
   // can overwrite it easy
