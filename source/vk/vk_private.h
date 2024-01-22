@@ -143,6 +143,8 @@ typedef struct vk_texture_handle_t {
   // In case the texture should be drawn in the immediate pipeline
   // Not all textures will be
   VkDescriptorSet set;
+
+  void* imgui_id;
 } vk_texture_handle_t;
 
 typedef struct vk_immediate_t {

@@ -1,8 +1,7 @@
-#include <cimgui.h>
-// #include <imgui/cimgui_impl_vulkan.h>
 #include "vk/vk_private.h"
 #include "vk/vk_system.h"
 #include "vk/vk_vulkan.h"
+#include <cimgui.h>
 
 #include <cimgui.h>
 #include <stdbool.h>
@@ -81,6 +80,8 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL VK_DebugCallBack(
 
   return VK_FALSE;
 }
+
+ImTextureID ImGui_AddTexture(VkSampler sampler, VkImageView image_view, VkImageLayout image_layout);
 
 void VK_TransitionColorTexture(VkCommandBuffer cmd, VkImage image,
                                VkImageLayout from_layout,
@@ -1762,6 +1763,177 @@ void VK_UploadFontTextures(vk_rend_t *rend, texture_t *textures,
                               rend->font_textures_desc_set, rend->font_sampler);
 }
 
+void VK_UploadUITextures(vk_rend_t *rend, texture_t *textures,
+                         unsigned count) {
+  vkWaitForFences(rend->device, 1, &rend->transfer_fence, true, UINT64_MAX);
+
+  vkResetFences(rend->device, 1, &rend->transfer_fence);
+
+  VkCommandBuffer cmd = rend->transfer_command_buffer;
+  VkCommandBufferBeginInfo begin_info = {
+      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+      .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+  };
+
+  vkBeginCommandBuffer(cmd, &begin_info);
+
+  {
+    for (size_t t = 0; t < count; t++) {
+      VkImage image;
+      VkImageView image_view;
+
+      VkBuffer staging;
+
+      VmaAllocation staging_alloc;
+      VmaAllocation image_alloc;
+
+      texture_t *texture = &textures[t];
+      VkExtent3D extent = {
+          .width = texture->width,
+          .height = texture->height,
+          .depth = 1,
+      };
+      VkImageCreateInfo tex_info = {
+          .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+          .imageType = VK_IMAGE_TYPE_2D,
+          .format = VK_FORMAT_R8G8B8A8_SRGB,
+          .extent = extent,
+          .mipLevels = 1,
+          .arrayLayers = 1,
+          .samples = VK_SAMPLE_COUNT_1_BIT,
+          .tiling = VK_IMAGE_TILING_OPTIMAL,
+          .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+      };
+      VmaAllocationCreateInfo tex_alloc_info = {.usage =
+                                                    VMA_MEMORY_USAGE_GPU_ONLY};
+
+      vmaCreateImage(rend->allocator, &tex_info, &tex_alloc_info,
+                     &image, &image_alloc, NULL);
+
+      // Change layout of this image
+      VkImageSubresourceRange range;
+      range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      range.baseMipLevel = 0;
+      range.levelCount = 1;
+      range.baseArrayLayer = 0;
+      range.layerCount = 1;
+
+      VkImageMemoryBarrier image_barrier_1 = {
+          .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+          .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+          .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+          .image = image,
+          .subresourceRange = range,
+          .srcAccessMask = 0,
+          .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+      };
+
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL,
+                           1, &image_barrier_1);
+
+      // CREATE, MAP
+      VkBufferCreateInfo staging_info = {
+          .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+          .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+          .size = texture->width * texture->height * 4,
+      };
+
+      VmaAllocationCreateInfo staging_alloc_info = {
+          .usage = VMA_MEMORY_USAGE_CPU_TO_GPU,
+      };
+
+      vmaCreateBuffer(rend->allocator, &staging_info, &staging_alloc_info,
+                      &staging, &staging_alloc, NULL);
+
+      void *data;
+      vmaMapMemory(rend->allocator, staging_alloc, &data);
+      memcpy(data, texture->data, texture->width * texture->height * 4);
+      vmaUnmapMemory(rend->allocator, staging_alloc);
+
+      // COPY
+      VkBufferImageCopy copy_region = {
+          .bufferOffset = 0,
+          .bufferRowLength = 0,
+          .bufferImageHeight = 0,
+          .imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+          .imageSubresource.mipLevel = 0,
+          .imageSubresource.baseArrayLayer = 0,
+          .imageSubresource.layerCount = 1,
+          .imageExtent = extent,
+      };
+
+      vkCmdCopyBufferToImage(cmd, staging, image,
+                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                             &copy_region);
+
+      image_barrier_1.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+      image_barrier_1.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      image_barrier_1.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      image_barrier_1.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, NULL, 0,
+                           NULL, 1, &image_barrier_1);
+
+      // Create image view and sampler
+      // Almost there
+      VkImageViewCreateInfo image_view_info = {
+          .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+          .viewType = VK_IMAGE_VIEW_TYPE_2D,
+          .format = VK_FORMAT_R8G8B8A8_SRGB,
+          .components =
+              {
+                  .r = VK_COMPONENT_SWIZZLE_IDENTITY,
+                  .g = VK_COMPONENT_SWIZZLE_IDENTITY,
+                  .b = VK_COMPONENT_SWIZZLE_IDENTITY,
+                  .a = VK_COMPONENT_SWIZZLE_IDENTITY,
+              },
+          .subresourceRange =
+              {
+                  .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                  .baseMipLevel = 0,
+                  .levelCount = 1,
+                  .baseArrayLayer = 0,
+                  .layerCount = 1,
+              },
+          .image = image,
+      };
+
+      vkCreateImageView(rend->device, &image_view_info, NULL,
+                        &image_view);
+      if (rend->immediate_handle_count >= rend->immediate_handle_capacity) {
+        rend->immediate_handles =
+            realloc(rend->immediate_handles, sizeof(vk_texture_handle_t) * 2 *
+                                                 rend->immediate_handle_capacity);
+
+        rend->immediate_handle_capacity *= 2;
+      }
+
+      texture->idx = rend->immediate_handle_count;
+      rend->immediate_handles[texture->idx].image = image;
+      rend->immediate_handles[texture->idx].image_view = image_view;
+      rend->immediate_handles[texture->idx].image_alloc = image_alloc;
+      rend->immediate_handles[texture->idx].staging = staging;
+      rend->immediate_handles[texture->idx].staging_alloc = staging_alloc;
+      rend->immediate_handles[texture->idx].imgui_id = ImGui_AddTexture(rend->linear_sampler, image_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+      rend->immediate_handle_count++;
+    }
+  }
+  vkEndCommandBuffer(cmd);
+
+  VkSubmitInfo submit_info = {
+      .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+      .commandBufferCount = 1,
+      .pCommandBuffers = &rend->transfer_command_buffer,
+  };
+
+  vkQueueSubmit(rend->graphics_queue, 1, &submit_info, rend->transfer_fence);
+
+  VK_CreateTexturesDescriptor(rend, &rend->font_assets,
+                              rend->font_textures_desc_set, rend->font_sampler);
+}
+
 void VK_UpdateFontTextures(vk_rend_t *rend, texture_t *textures,
                            unsigned count) {
   vkWaitForFences(rend->device, 1, &rend->transfer_fence, true, UINT64_MAX);
@@ -2137,10 +2309,10 @@ void VK_UploadSingleTexture(vk_rend_t *rend, texture_t *texture) {
     rend->immediate_handle_capacity *= 2;
   }
 
-  texture->handle = rend->immediate_handle_count;
+  texture->idx = rend->immediate_handle_count;
   rend->immediate_handle_count++;
 
-  rend->immediate_handles[texture->handle] = (vk_texture_handle_t){
+  rend->immediate_handles[texture->idx] = (vk_texture_handle_t){
       .image = vk_image,
       .image_alloc = vk_image_alloc,
       .image_view = vk_image_view,
@@ -2154,3 +2326,7 @@ void *VK_GetAgents(vk_rend_t *rend) { return rend->ecs->agents; }
 void *VK_GetTransforms(vk_rend_t *rend) { return rend->ecs->transforms; }
 
 void *VK_GetEntities(vk_rend_t *rend) { return rend->ecs->entities; }
+
+void *VK_GetTextureHandle(vk_rend_t *rend, unsigned idx) {
+  return rend->immediate_handles[idx].imgui_id;
+}

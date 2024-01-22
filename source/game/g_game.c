@@ -2,6 +2,7 @@
 #include "client/cl_client.h"
 #include "common/c_job.h"
 #include "common/c_profiler.h"
+#include "stbi_image_write.h"
 #include <cglm/mat4.h>
 #include <cglm/util.h>
 #include <client/cl_input.h>
@@ -50,6 +51,10 @@ game_t *G_CreateGame(client_t *client, char *base) {
   game->map_texture_capacity = 32;
   game->map_texture_count = 0;
 
+  game->ui_textures = calloc(32, sizeof(texture_t));
+  game->ui_texture_capacity = 32;
+  game->ui_texture_count = 0;
+
   game->font_textures = calloc(1024, sizeof(texture_t));
   game->font_texture_capacity = 1024;
   game->font_texture_count = 0;
@@ -70,7 +75,7 @@ game_t *G_CreateGame(client_t *client, char *base) {
   zpl_affinity af;
   zpl_affinity_init(&af);
   // The workers[0] is actually the main thread ok?
-  game->worker_count = (af.thread_count / 2) + 1;
+  game->worker_count = af.thread_count;
   printf("[VERBOSE] Game will run on %d threads.\n", game->worker_count);
 
   game->job_sys2 = C_JobSystemCreate(game->worker_count);
@@ -85,6 +90,7 @@ game_t *G_CreateGame(client_t *client, char *base) {
   G_Walls_init(&game->wall_bank, zpl_heap_allocator());
   G_Terrains_init(&game->terrain_bank, zpl_heap_allocator());
   G_Pawns_init(&game->pawn_bank, zpl_heap_allocator());
+  G_Images_init(&game->image_bank, zpl_heap_allocator());
 
   // Two freetype library because font loading may happen on different threads
   if (FT_Init_FreeType(&game->console_ft)) {
@@ -224,18 +230,23 @@ void G_DestroyGame(game_t *game) {
 void G_WorkerThinkAgent(void *data, unsigned thread_idx) {
   think_job_t *job = data;
   game_t *game = job->game;
-  unsigned agent = job->agent;
+  if (job->agent_count == 0) {
+    printf("wtf?\n");
+  }
+  for (unsigned b = 0; b < job->agent_count; b++) {
+    unsigned agent = job->agents[b];
 
-  qcvm_t *qcvm = game->qcvms[thread_idx];
+    qcvm_t *qcvm = game->qcvms[thread_idx];
 
-  for (unsigned t = 0; t < game->current_scene->agent_think_listener_count; t++) {
-    qcvm_set_parm_int(qcvm, 0, game->current_scene->current_map);
-    qcvm_set_parm_int(qcvm, 1, agent);
-    qcvm_set_parm_float(qcvm, 2, game->cpu_agents[agent].type);
-    qcvm_set_parm_vector(qcvm, 3, game->transforms[agent].position[0], game->transforms[agent].position[1], 0.0f);
-    qcvm_set_parm_float(qcvm, 4, game->cpu_agents[agent].state);
+    for (unsigned t = 0; t < game->current_scene->agent_think_listener_count; t++) {
+      qcvm_set_parm_int(qcvm, 0, game->current_scene->current_map);
+      qcvm_set_parm_int(qcvm, 1, agent);
+      qcvm_set_parm_float(qcvm, 2, game->cpu_agents[agent].type);
+      qcvm_set_parm_vector(qcvm, 3, game->transforms[agent].position[0], game->transforms[agent].position[1], 0.0f);
+      qcvm_set_parm_float(qcvm, 4, game->cpu_agents[agent].state);
 
-    qcvm_run(qcvm, game->current_scene->agent_think_listeners[t].qcvm_func);
+      qcvm_run(qcvm, game->current_scene->agent_think_listeners[t].qcvm_func);
+    }
   }
 }
 
@@ -409,19 +420,39 @@ game_state_t *G_TickGame(client_t *client, game_t *game) {
     if (agent_count != 0) {
       C_ProfilerStartBlock(PROFILER_BLOCK_THINK);
       think_job_t *think_jobs = calloc(agent_count, sizeof(think_job_t));
+
       unsigned agent_idx = 0;
+      unsigned current_batch = 0;
+
+      think_job_t batch = {
+          .game = game,
+          .agent_count = 0,
+      };
 
       for (unsigned i = 0; i < game->entity_count; i++) {
         unsigned signature = game->entities[i];
 
         if (signature & agent_signature) {
-          think_jobs[i] = (think_job_t){
-              .agent = agent_idx,
-              .game = game,
-          };
-          C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerThinkAgent, .data = &think_jobs[agent_idx]});
+          batch.agents[agent_idx % THINK_JOB_BATCH_AGENT_SIZE] = i;
+          batch.agent_count++;
+
+          if (agent_idx % THINK_JOB_BATCH_AGENT_SIZE == 0 && agent_idx != 0) {
+            think_jobs[current_batch] = batch;
+            C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerThinkAgent, .data = &think_jobs[current_batch]});
+            batch.agent_count = 0;
+            current_batch++;
+          }
           agent_idx++;
         }
+      }
+
+      if (agent_count % THINK_JOB_BATCH_AGENT_SIZE) {
+        batch.agent_count++;
+      }
+
+      if (batch.agent_count != 0) {
+        think_jobs[current_batch] = batch;
+        C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerThinkAgent, .data = &think_jobs[current_batch]});
       }
 
       while (!C_JobSystemAllDone(game->job_sys2)) {
@@ -495,7 +526,7 @@ game_state_t *G_TickGame(client_t *client, game_t *game) {
 
 texture_t G_LoadSingleTextureFromMemory(const unsigned char *pdata,
                                         unsigned len, char *label) {
-  stbi_set_flip_vertically_on_load(true);
+  stbi_set_flip_vertically_on_load(false);
   int w, h, c;
   unsigned char *data = stbi_load_from_memory(pdata, len, &w, &h, &c, 4);
 
@@ -513,7 +544,7 @@ texture_t G_LoadSingleTextureFromMemory(const unsigned char *pdata,
 }
 
 texture_t G_LoadSingleTexture(const char *path) {
-  stbi_set_flip_vertically_on_load(true);
+  stbi_set_flip_vertically_on_load(false);
   int w, h, c;
   unsigned char *data = stbi_load(path, &w, &h, &c, 4);
 
@@ -670,6 +701,7 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
   zpl_json_object *walls = zpl_adt_find(&recipes, "walls", false);
   zpl_json_object *furnitures = zpl_adt_find(&recipes, "furnitures", false);
   zpl_json_object *pawns = zpl_adt_find(&recipes, "pawns", false);
+  zpl_json_object *ui = zpl_adt_find(&recipes, "ui", false);
 
   zpl_unused(furnitures);
 
@@ -680,6 +712,47 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
   // every single sprites, just the health). So the identifier is the only
   // mandatory field. Yes I know something like Rust or Go would have been
   // smarter than all this manual marshalling bullshit.
+
+  if (ui && ui->type == ZPL_ADT_TYPE_ARRAY) {
+    unsigned size = zpl_array_count(ui->nodes);
+
+    for (unsigned i = 0; i < size; i++) {
+      zpl_adt_node *element = &ui->nodes[i];
+      zpl_adt_node *id_node = zpl_adt_find(element, "id", false);
+
+      if (!id_node || id_node->type != ZPL_ADT_TYPE_STRING) {
+        printf("[WARNING] The element %d in the 'ui' list doesn't have "
+               "an ID (of type string).\n",
+               i);
+        continue;
+      } else {
+        zpl_u64 key = zpl_fnv64(id_node->string, strlen(id_node->string));
+        // Does the bank contains this element? If not create an empty one.
+        image_ui_t *image = G_Images_get(&game->image_bank, key);
+
+        if (!image) {
+          G_Images_set(&game->image_bank, key, (image_ui_t){.revision = 1});
+          image = G_Images_get(&game->image_bank, key);
+        }
+        image->label = strcpy(malloc(strlen(id_node->string) + 1), id_node->string);
+        image->revision += 1;
+
+        zpl_adt_node *path_node = zpl_adt_find(element, "path", false);
+
+        if (path_node && path_node->type == ZPL_ADT_TYPE_STRING) {
+          image->path =
+              memcpy(malloc(strlen(path_node->string) + 1), path_node->string,
+                     strlen(path_node->string) + 1);
+
+          printf("let's go we registered `%s` under `%s`\n", image->path, id_node->string);
+        } else {
+          printf("[WARNING] The element %d (id=`%s`) in the 'ui' list doesn't have "
+                 "a path (of type string).\n",
+                 i, id_node->string);
+        }
+      }
+    }
+  }
 
   if (terrains && terrains->type == ZPL_ADT_TYPE_ARRAY) {
     unsigned size = zpl_array_count(terrains->nodes);
@@ -1714,7 +1787,7 @@ void G_Draw_Image_Relative(game_t *game, const char *path, float w, float h,
     game->state.draws[game->state.draw_count].z = z;
     game->state.draws[game->state.draw_count].w = w;
     game->state.draws[game->state.draw_count].h = h;
-    game->state.draws[game->state.draw_count].handle = texture->handle;
+    game->state.draws[game->state.draw_count].handle = texture->idx;
 
     game->state.draw_count++;
   }
@@ -2034,10 +2107,18 @@ void G_WorkerLoadTexture(void *data, unsigned thread_idx) {
   texture_job_t *the_job = data;
   game_t *game = the_job->game;
 
-  char the_path[256];
+  char the_path[512];
   sprintf(&the_path[0], "%s/%s", game->base, the_job->path);
 
   texture_t tex = G_LoadSingleTexture(the_path);
+
+  if (the_job->type == __to_ui) {
+    // Label shouldn't be absolute when dealing with UI image
+    strcpy(tex.label, the_job->label);
+
+    // Image shouldn't be flipped vertically
+    
+  }
 
   if (!tex.data) {
     printf("[ERROR] Couldn't load texture `%s` | `%s` (in a worker thread).\n",
@@ -2045,16 +2126,28 @@ void G_WorkerLoadTexture(void *data, unsigned thread_idx) {
     return;
   }
 
-  zpl_mutex_lock(&game->map_texture_mutex);
-  if (game->map_texture_count == game->map_texture_capacity) {
-    game->map_texture_capacity *= 2;
-    game->map_textures = realloc(
-        game->map_textures, game->map_texture_capacity * sizeof(texture_t));
+  if (the_job->type == __to_map_or_font) {
+    zpl_mutex_lock(&game->map_texture_mutex);
+    if (game->map_texture_count == game->map_texture_capacity) {
+      game->map_texture_capacity *= 2;
+      game->map_textures = realloc(
+          game->map_textures, game->map_texture_capacity * sizeof(texture_t));
+    }
+    game->map_textures[game->map_texture_count] = tex;
+    *the_job->dest_id = game->map_texture_count;
+    game->map_texture_count++;
+    zpl_mutex_unlock(&game->map_texture_mutex);
+  } else if (the_job->type == __to_ui) {
+    zpl_mutex_lock(&game->ui_texture_mutex);
+    if (game->ui_texture_count == game->ui_texture_capacity) {
+      game->ui_texture_capacity *= 2;
+      game->ui_textures = realloc(
+          game->ui_textures, game->ui_texture_capacity * sizeof(texture_t));
+    }
+    game->ui_textures[game->ui_texture_count] = tex;
+    game->ui_texture_count++;
+    zpl_mutex_unlock(&game->ui_texture_mutex);
   }
-  game->map_textures[game->map_texture_count] = tex;
-  *the_job->dest_text = game->map_texture_count;
-  game->map_texture_count++;
-  zpl_mutex_unlock(&game->map_texture_mutex);
 }
 
 void G_Load_Game(game_t *game) {
@@ -2096,7 +2189,8 @@ void G_Load_Game(game_t *game) {
       calloc(zpl_array_count(game->material_bank.entries) * 3 +
                  zpl_array_count(game->wall_bank.entries) * 16 +
                  zpl_array_count(game->terrain_bank.entries) * 3 +
-                 zpl_array_count(game->pawn_bank.entries) * 3,
+                 zpl_array_count(game->pawn_bank.entries) * 3 +
+                 zpl_array_count(game->image_bank.entries),
              sizeof(texture_job_t));
 
   for (unsigned i = 0; i < zpl_array_count(game->material_bank.entries); i++) {
@@ -2105,20 +2199,23 @@ void G_Load_Game(game_t *game) {
 
     texture_job_t *low_stack_job = &texture_jobs[i * 3 + 0];
     *low_stack_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &mat->low_stack_tex,
+        .dest_id = &mat->low_stack_tex,
         .path = mat->low_stack_path,
     };
     texture_job_t *half_stack_job = &texture_jobs[i * 3 + 1];
     *half_stack_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &mat->half_stack_tex,
+        .dest_id = &mat->half_stack_tex,
         .path = mat->half_stack_path,
     };
     texture_job_t *full_stack_job = &texture_jobs[i * 3 + 2];
     *full_stack_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &mat->full_stack_tex,
+        .dest_id = &mat->full_stack_tex,
         .path = mat->full_stack_path,
     };
 
@@ -2135,98 +2232,114 @@ void G_Load_Game(game_t *game) {
 
     texture_job_t *only_left_job = &texture_jobs[offset + i * 16 + 0];
     *only_left_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &wall->only_left_tex,
+        .dest_id = &wall->only_left_tex,
         .path = wall->only_left_path,
     };
     texture_job_t *only_right_job = &texture_jobs[offset + i * 16 + 1];
     *only_right_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &wall->only_right_tex,
+        .dest_id = &wall->only_right_tex,
         .path = wall->only_right_path,
     };
     texture_job_t *only_top_job = &texture_jobs[offset + i * 16 + 2];
     *only_top_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &wall->only_top_tex,
+        .dest_id = &wall->only_top_tex,
         .path = wall->only_top_path,
     };
     texture_job_t *only_bottom_job = &texture_jobs[offset + i * 16 + 3];
     *only_bottom_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &wall->only_bottom_tex,
+        .dest_id = &wall->only_bottom_tex,
         .path = wall->only_bottom_path,
     };
     texture_job_t *all_job = &texture_jobs[offset + i * 16 + 4];
     *all_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &wall->all_tex,
+        .dest_id = &wall->all_tex,
         .path = wall->all_path,
     };
     texture_job_t *left_right_bottom_job = &texture_jobs[offset + i * 16 + 5];
     *left_right_bottom_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &wall->left_right_bottom_tex,
+        .dest_id = &wall->left_right_bottom_tex,
         .path = wall->left_right_bottom_path,
     };
     texture_job_t *left_right_job = &texture_jobs[offset + i * 16 + 6];
     *left_right_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &wall->left_right_tex,
+        .dest_id = &wall->left_right_tex,
         .path = wall->left_right_path,
     };
     texture_job_t *left_right_top_job = &texture_jobs[offset + i * 16 + 7];
     *left_right_top_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &wall->left_right_top_tex,
+        .dest_id = &wall->left_right_top_tex,
         .path = wall->left_right_top_path,
     };
     texture_job_t *top_bottom_job = &texture_jobs[offset + i * 16 + 8];
     *top_bottom_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &wall->top_bottom_tex,
+        .dest_id = &wall->top_bottom_tex,
         .path = wall->top_bottom_path,
     };
     texture_job_t *right_top_job = &texture_jobs[offset + i * 16 + 9];
     *right_top_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &wall->right_top_tex,
+        .dest_id = &wall->right_top_tex,
         .path = wall->right_top_path,
     };
     texture_job_t *left_top_job = &texture_jobs[offset + i * 16 + 10];
     *left_top_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &wall->left_top_tex,
+        .dest_id = &wall->left_top_tex,
         .path = wall->left_top_path,
     };
     texture_job_t *right_bottom_job = &texture_jobs[offset + i * 16 + 11];
     *right_bottom_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &wall->right_bottom_tex,
+        .dest_id = &wall->right_bottom_tex,
         .path = wall->right_bottom_path,
     };
     texture_job_t *left_bottom_job = &texture_jobs[offset + i * 16 + 12];
     *left_bottom_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &wall->left_bottom_tex,
+        .dest_id = &wall->left_bottom_tex,
         .path = wall->left_bottom_path,
     };
     texture_job_t *left_top_bottom_job = &texture_jobs[offset + i * 16 + 13];
     *left_top_bottom_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &wall->left_top_bottom_tex,
+        .dest_id = &wall->left_top_bottom_tex,
         .path = wall->left_top_bottom_path,
     };
     texture_job_t *right_top_bottom_job = &texture_jobs[offset + i * 16 + 14];
     *right_top_bottom_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &wall->right_top_bottom_tex,
+        .dest_id = &wall->right_top_bottom_tex,
         .path = wall->right_top_bottom_path,
     };
     texture_job_t *nothing_job = &texture_jobs[offset + i * 16 + 15];
     *nothing_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &wall->nothing_tex,
+        .dest_id = &wall->nothing_tex,
         .path = wall->nothing_path,
     };
 
@@ -2256,20 +2369,23 @@ void G_Load_Game(game_t *game) {
 
     texture_job_t *variant1_job = &texture_jobs[offset + i * 3 + 0];
     *variant1_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &terrain->variant1_tex,
+        .dest_id = &terrain->variant1_tex,
         .path = terrain->variant1_path,
     };
     texture_job_t *variant2_job = &texture_jobs[offset + i * 3 + 1];
     *variant2_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &terrain->variant2_tex,
+        .dest_id = &terrain->variant2_tex,
         .path = terrain->variant2_path,
     };
     texture_job_t *variant3_job = &texture_jobs[offset + i * 3 + 2];
     *variant3_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &terrain->variant3_tex,
+        .dest_id = &terrain->variant3_tex,
         .path = terrain->variant3_path,
     };
 
@@ -2286,26 +2402,46 @@ void G_Load_Game(game_t *game) {
 
     texture_job_t *north_job = &texture_jobs[offset + i * 3 + 0];
     *north_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &pawn->north_tex,
+        .dest_id = &pawn->north_tex,
         .path = pawn->north_path,
     };
     texture_job_t *south_job = &texture_jobs[offset + i * 3 + 1];
     *south_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &pawn->south_tex,
+        .dest_id = &pawn->south_tex,
         .path = pawn->south_path,
     };
     texture_job_t *east_job = &texture_jobs[offset + i * 3 + 2];
     *east_job = (texture_job_t){
+        .type = __to_map_or_font,
         .game = game,
-        .dest_text = &pawn->east_tex,
+        .dest_id = &pawn->east_tex,
         .path = pawn->east_path,
     };
 
     C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = north_job});
     C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = south_job});
     C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = east_job});
+  }
+
+  offset += zpl_array_count(game->pawn_bank.entries) * 3;
+
+  for (unsigned i = 0; i < zpl_array_count(game->image_bank.entries); i++) {
+    image_bank_tEntry *entry = &game->image_bank.entries[i];
+    image_ui_t *image = &entry->value;
+
+    texture_job_t *job = &texture_jobs[i + offset];
+    *job = (texture_job_t){
+        .type = __to_ui,
+        .path = image->path,
+        .label = image->label,
+        .game = game,
+    };
+
+    C_JobSystemEnqueue(game->job_sys2, (job_t){.proc = G_WorkerLoadTexture, .data = job});
   }
 
   while (!C_JobSystemAllDone(game->job_sys2)) {
@@ -2316,6 +2452,24 @@ void G_Load_Game(game_t *game) {
 
   VK_UploadMapTextures(game->rend, game->map_textures, game->map_texture_count);
   VK_UploadFontTextures(game->rend, game->font_textures, game->font_texture_count);
+  VK_UploadUITextures(game->rend, game->ui_textures, game->ui_texture_count);
+
+  // Extract all handle from uploaded ui textures
+  for (unsigned i = 0; i < game->ui_texture_count; i++) {
+    void *imgui_id = VK_GetTextureHandle(game->rend, game->ui_textures[i].idx);
+
+    printf("game->ui_textures[%d].idx == %d\n", i, game->ui_textures[i].idx);
+
+    // Get original image from its label
+    zpl_u64 key = zpl_fnv64(game->ui_textures[i].label, strlen(game->ui_textures[i].label));
+    image_ui_t *image = G_Images_get(&game->image_bank, key);
+
+    if (image) {
+      image->imgui_id = imgui_id;
+    } else {
+      printf("[ERROR] An texture has been uploaded as a UI image, but no corresponding UI image was found (label=`%s`).\n", game->ui_textures[i].label);
+    }
+  }
 
   G_Scene_Run(game, game->next_scene);
 
@@ -2574,6 +2728,20 @@ void G_Input_GetAxisValue_QC(qcvm_t *qcvm) {
   }
 }
 
+void G_Input_GetLeftMouseState_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+  
+  unsigned r = CL_GetInput(game->client)->mouse_left;
+  qcvm_return_int(qcvm, r);
+}
+
+void G_Input_GetRightMouseState_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+
+  unsigned r = CL_GetInput(game->client)->mouse_right;
+  qcvm_return_int(qcvm, r);
+}
+
 void G_Input_GetMousePosition_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
   qcvm_return_vector(qcvm, CL_GetInput(game->client)->mouse_x,
@@ -2766,6 +2934,18 @@ void G_QCVMInstall(qcvm_t *qcvm) {
       .type = QCVM_FLOAT,
   };
 
+    qcvm_export_t export_G_Input_GetLeftMouseState = {
+      .func = G_Input_GetLeftMouseState_QC,
+      .name = "G_Input_GetLeftMouseState",
+      .type = QCVM_INT,
+  };
+
+    qcvm_export_t export_G_Input_GetRightMouseState = {
+      .func = G_Input_GetRightMouseState_QC,
+      .name = "G_Input_GetRightMouseState",
+      .type = QCVM_INT,
+  };
+
   qcvm_export_t export_G_Input_GetMousePosition = {
       .func = G_Input_GetMousePosition_QC,
       .name = "G_Input_GetMousePosition",
@@ -2908,6 +3088,8 @@ void G_QCVMInstall(qcvm_t *qcvm) {
   qcvm_add_export(qcvm, &export_G_Camera_GetZoom);
   qcvm_add_export(qcvm, &export_G_Camera_SetZoom);
   qcvm_add_export(qcvm, &export_G_Input_GetAxisValue);
+  qcvm_add_export(qcvm, &export_G_Input_GetLeftMouseState);
+  qcvm_add_export(qcvm, &export_G_Input_GetRightMouseState);
   qcvm_add_export(qcvm, &export_G_Input_GetMousePosition);
   qcvm_add_export(qcvm, &export_G_Screen_GetSize);
   qcvm_add_export(qcvm, &export_G_Item_AddAmount);

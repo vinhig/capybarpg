@@ -1,6 +1,8 @@
 #include "SDL_keyboard.h"
 #include "cimgui.h"
 #include "client/cl_client.h"
+#include "client/cl_input.h"
+#include "game/g_game.h"
 #include "qcvm.h"
 #include <SDL2/SDL.h>
 #include <game/g_private.h>
@@ -14,6 +16,10 @@ static inline __attribute__((always_inline)) char *UI_Translation(game_t *game, 
   // printf("idx == %d\n", idx);
   return game->localization->translations[game->localization->current_language][idx + 1];
 }
+
+// TODO: not supposed to be like that
+
+unsigned Current_Button_Image_In_Wheel = 0;
 
 void UI_Begin_Menu_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
@@ -52,8 +58,8 @@ void UI_Begin_Menu_QC(qcvm_t *qcvm) {
     ImGui_PopStyleVar();
   } else if (strcmp(style, "settings_menu_apply") == 0) {
     ImGui_SetNextWindowBgAlpha(0.4f);
-    ImGui_SetNextWindowSize((ImVec2){(float)screen_width / 2.0f + 64.0f, 64.0f}, ImGuiCond_Once);
-    ImGui_SetNextWindowPos((ImVec2){400.0f, ((float)screen_height / 2.0) - (400.0f / 2.0) + 400.0f}, ImGuiCond_Once);
+    ImGui_SetNextWindowSize((ImVec2){(float)screen_width / 2.0f + 64.0f, 64.0f}, ImGuiCond_Appearing);
+    ImGui_SetNextWindowPos((ImVec2){400.0f, ((float)screen_height / 2.0) - (400.0f / 2.0) + 400.0f}, ImGuiCond_Appearing);
 
     flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar;
@@ -61,6 +67,44 @@ void UI_Begin_Menu_QC(qcvm_t *qcvm) {
     ImGui_PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
     ImGui_Begin(style, NULL, flags);
     ImGui_PopStyleVar();
+  } else if (strcmp(style, "wheel_tools_menu") == 0) {
+    float pos_x, pos_y;
+    pos_x = (float)CL_GetInput(game->client)->mouse_x - 128.0f;
+    pos_y = (float)CL_GetInput(game->client)->mouse_y - 128.0f;
+
+    ImGui_PushStyleVarImVec2(ImGuiStyleVar_WindowPadding, (ImVec2){0.0f, 0.0f});
+    ImGui_PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+
+    ImGui_SetNextWindowBgAlpha(0.0f);
+    ImGui_SetNextWindowSize((ImVec2){256.0f, 256.0f}, ImGuiCond_Appearing);
+    ImGui_SetNextWindowPos((ImVec2){pos_x, pos_y}, ImGuiCond_Appearing);
+
+    flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoCollapse |
+            ImGuiWindowFlags_NoSavedSettings;
+
+    ImGui_Begin("wheel_tools_menu_but_just_the_wheel", NULL, flags);
+    const char wheel_menu_label[] = "wheel_menu";
+    zpl_u64 key = zpl_fnv64(wheel_menu_label, strlen(wheel_menu_label));
+    image_ui_t *wheels_image = G_Images_get(&game->image_bank, key);
+
+    if (wheels_image) {
+      ImGui_SetCursorPosX(0.0f);
+      ImGui_SetCursorPosY(0.0f);
+      ImGui_Image(wheels_image->imgui_id, (ImVec2){256, 256});
+    }
+    ImGui_End();
+
+    ImGui_SetNextWindowBgAlpha(0.0f);
+    ImGui_SetNextWindowSize((ImVec2){256.0f, 256.0f}, ImGuiCond_Appearing);
+    ImGui_SetNextWindowPos((ImVec2){pos_x, pos_y}, ImGuiCond_Appearing);
+
+    ImGui_Begin(style, NULL, flags);
+
+    ImGui_PopStyleVar();
+    ImGui_PopStyleVar();
+
+    Current_Button_Image_In_Wheel = 0;
   } else {
     ImGui_Begin("don't care", NULL, flags);
   }
@@ -368,6 +412,61 @@ void UI_SetCurrentLanguage_QC(qcvm_t *qcvm) {
   game->localization->current_language = language_idx;
 }
 
+const ImVec2 offsets_wheel_menu[] = {
+    (ImVec2){96.0f, 0.0f},
+    (ImVec2){163.898f, 28.133f},
+    (ImVec2){193.000f, 97.000f},
+};
+
+void UI_ButtonImage_QC(qcvm_t *qcvm) {
+  game_t *game = qcvm_get_user_data(qcvm);
+
+  const char *tex_id = qcvm_get_parm_string(qcvm, 1);
+  const char *tex_hover_id = qcvm_get_parm_string(qcvm, 0);
+  const char *label = qcvm_get_parm_string(qcvm, 2);
+
+  zpl_u64 key = zpl_fnv64(tex_id, strlen(tex_id));
+  image_ui_t *image = G_Images_get(&game->image_bank, key);
+
+  key = zpl_fnv64(tex_hover_id, strlen(tex_hover_id));
+  image_ui_t *image_hover = G_Images_get(&game->image_bank, key);
+
+  ImGui_SetItemAllowOverlap();
+
+  ImGui_SetCursorPosX(offsets_wheel_menu[Current_Button_Image_In_Wheel].x - 8.0f);
+  ImGui_SetCursorPosY(offsets_wheel_menu[Current_Button_Image_In_Wheel].y - 8.0f);
+
+  bool r = ImGui_InvisibleButton(label, (ImVec2){64.0f, 64.0f}, 0);
+
+  bool is_hovered = ImGui_IsItemHovered(0);
+  bool is_clicked = CL_GetInput(game->client)->mouse_left;
+
+  ImGui_SetCursorPosX(offsets_wheel_menu[Current_Button_Image_In_Wheel].x - 8.0f);
+  ImGui_SetCursorPosY(offsets_wheel_menu[Current_Button_Image_In_Wheel].y - 8.0f);
+
+  if (strcmp(game->current_ui_style, "wheel_tools_menu")) {
+    // ImGui_PopStyleVar(ImGuiStyleVar_BUt)
+  }
+
+  if (image && image_hover) {
+    if (is_hovered) {
+      if (is_clicked) {
+        ImGui_Image((ImTextureID)image_hover->imgui_id, (ImVec2){64.0f + 16.0f, 64.0f + 16.0f});
+        // r = true;
+      } else {
+        ImGui_Image((ImTextureID)image->imgui_id, (ImVec2){64.0f + 16.0f, 64.0f + 16.0f});
+      }
+
+    } else {
+      ImGui_Image((ImTextureID)image_hover->imgui_id, (ImVec2){64.0f + 16.0f, 64.0f + 16.0f});
+    }
+  }
+
+  Current_Button_Image_In_Wheel++;
+
+  qcvm_return_int(qcvm, r);
+}
+
 void G_UIInstall(qcvm_t *qcvm) {
   qcvm_export_t export_UI_Begin_Menu = {
       .func = UI_Begin_Menu_QC,
@@ -562,6 +661,16 @@ void G_UIInstall(qcvm_t *qcvm) {
       .args[0] = {.name = "text", .type = QCVM_INT},
   };
 
+  qcvm_export_t export_UI_ButtonImage = {
+      .func = UI_ButtonImage_QC,
+      .name = "UI_ButtonImage",
+      .argc = 3,
+      .args[0] = {.name = "img", .type = QCVM_STRING},
+      .args[1] = {.name = "img_hover", .type = QCVM_STRING},
+      .args[2] = {.name = "label", .type = QCVM_STRING},
+      .type = QCVM_INT,
+  };
+
   qcvm_add_export(qcvm, &export_UI_Begin_Menu);
   qcvm_add_export(qcvm, &export_UI_End_Menu);
   qcvm_add_export(qcvm, &export_UI_Text);
@@ -590,4 +699,6 @@ void G_UIInstall(qcvm_t *qcvm) {
   qcvm_add_export(qcvm, &export_UI_CheckBoxLocalized);
   qcvm_add_export(qcvm, &export_UI_Begin_SelectLocalized);
   qcvm_add_export(qcvm, &export_UI_OptionLocalized);
+
+  qcvm_add_export(qcvm, &export_UI_ButtonImage);
 }

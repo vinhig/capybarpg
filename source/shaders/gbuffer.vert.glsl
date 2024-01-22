@@ -39,7 +39,6 @@ layout(location = 3) flat out uint draw_state;
 layout(location = 4) flat out uint stack_count;
 layout(location = 5) flat out uint stack_textures[4];
 
-
 layout(std430, set = 3, binding = 0) readonly buffer Visibles {
   uint visibles[];
 };
@@ -153,4 +152,6 @@ void main() {
     o_color = vec3(square_uv[gl_VertexIndex], 1.0);
     vtx_uv = square_uv[gl_VertexIndex];
   }
+
+  vtx_uv.y = 1.0 - vtx_uv.y;
 }

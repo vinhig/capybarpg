@@ -1,7 +1,7 @@
 #pragma once
 
-#include <wchar.h>
 #include <stdbool.h>
+#include <wchar.h>
 
 typedef struct client_t client_t;
 
@@ -34,8 +34,14 @@ typedef struct input_t {
     bool submit;
   } text_editing;
 
-  unsigned mouse_x;
-  unsigned mouse_y;
+  int mouse_x;
+  int mouse_y;
+
+  enum {
+    __nothing = 0,
+    __clicked = 1,
+    __just_clicked = 2,
+  } mouse_left, mouse_right;
 } input_t;
 
 input_t *CL_GetInput(client_t *client);

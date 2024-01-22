@@ -114,6 +114,8 @@ void G_Camera_SetZoom(float value) = #0;
 
 float G_Input_GetAxisValue(string axis) = #0;
 vector G_Input_GetMousePosition() = #0;
+int G_Input_GetLeftMouseState() = #0; // 0 is not pressed, 1 is pressed, 2 is just pressed
+int G_Input_GetRightMouseState() = #0; // 0 is not pressed, 1 is pressed, 2 is just pressed
 
 vector G_Screen_GetSize() = #0;
 
@@ -170,6 +172,7 @@ int UI_CheckBox(string text, int original_value) = #0;
 int UI_Begin_Select(string text, string original_value) = #0;
 int UI_Option(string text) = #0;
 void UI_End_Select() = #0;
+int UI_ButtonImage(string img, string img_hover, string label) = #0;
 
 // language is the index of the column to look up for
 // translation

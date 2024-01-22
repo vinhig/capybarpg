@@ -1,6 +1,7 @@
 #include "cl_client.h"
 #include "SDL_events.h"
 #include "SDL_keycode.h"
+#include "SDL_mouse.h"
 #include "SDL_video.h"
 #include "cl_input.h"
 #include "vk/vk_vulkan.h"
@@ -280,6 +281,13 @@ void CL_GetScreenDim(client_t *client, unsigned *width, unsigned *height) {
 void CL_UpdateClient(client_t *client) {
   SDL_Event event;
 
+  if (client->input.mouse_left == 2) {
+    client->input.mouse_left = 1;
+  }
+  if (client->input.mouse_right == 2) {
+    client->input.mouse_right = 1;
+  }
+
   client->input.wheel = 0.0;
 
   if (CL_ConsoleOpened(client->console)) {
@@ -399,11 +407,29 @@ void CL_UpdateClient(client_t *client) {
         client->input.view.y_axis = -event.motion.xrel;
         break;
       }
+      case SDL_MOUSEBUTTONDOWN: {
+        if (event.button.button == SDL_BUTTON_LEFT) {
+          client->input.mouse_left = 2;
+        } else if (event.button.button == SDL_BUTTON_RIGHT) {
+          client->input.mouse_right = 2;
+        }
+        break;
+      }
+      case SDL_MOUSEBUTTONUP: {
+        if (event.button.button == SDL_BUTTON_LEFT) {
+          client->input.mouse_left = 0;
+        } else if (event.button.button == SDL_BUTTON_RIGHT) {
+          client->input.mouse_right = 0;
+        }
+        break;
+      }
       default: {
       }
       }
     }
   }
+
+  SDL_GetMouseState(&client->input.mouse_x, &client->input.mouse_y);
 
   CL_UpdateConsole(client, client->console);
 }
@@ -431,7 +457,7 @@ void CL_DestroyClient(client_t *client) {
   CL_Strings_destroy(&client->global_variable_keys);
   CL_Floats_destroy(&client->global_variable_floats);
   CL_Integers_destroy(&client->global_variable_ints);
-  
+
   CL_DestroyConsole(client, client->console);
   VK_DestroyRend(client->rend);
   SDL_DestroyWindow(client->window);

@@ -22,6 +22,7 @@ struct map;
 ZPL_TABLE_DECLARE(extern, material_bank_t, G_Materials_, material_t)
 ZPL_TABLE_DECLARE(extern, texture_bank_t, G_ImmediateTextures_, texture_t)
 ZPL_TABLE_DECLARE(extern, wall_bank_t, G_Walls_, wall_t)
+ZPL_TABLE_DECLARE(extern, image_bank_t, G_Images_, image_ui_t)
 ZPL_TABLE_DECLARE(extern, terrain_bank_t, G_Terrains_, terrain_t)
 ZPL_TABLE_DECLARE(extern, character_bank_t, CL_Characters_, character_t)
 ZPL_TABLE_DECLARE(extern, pawn_bank_t, G_Pawns_, pawn_t)
@@ -61,8 +62,10 @@ typedef struct cpu_tile_t {
 
 typedef struct node_t node_t;
 
+#define THINK_JOB_BATCH_AGENT_SIZE 64
 typedef struct think_job_t {
-  unsigned agent;
+  unsigned agents[THINK_JOB_BATCH_AGENT_SIZE]; // a think job handles more than 1 agent to reduce contention in the job system
+  unsigned agent_count;
 
   game_t *game;
 } think_job_t;
@@ -93,10 +96,18 @@ typedef struct font_job_t {
 } font_job_t;
 
 typedef struct texture_job_t {
-  const char *path;
-  unsigned *dest_text;
+  union {
+    unsigned *dest_id;
+    char* label;
+  };
+
+  enum {
+    __to_map_or_font,
+    __to_ui,
+  } type;
 
   game_t *game;
+  const char *path;
 } texture_job_t;
 
 typedef struct map_t {
@@ -171,7 +182,7 @@ struct game_t {
   unsigned *entities;
 
   unsigned worker_count;
-  job_system_t* job_sys2;
+  job_system_t *job_sys2;
 
   qcvm_t *qcvms[16];
 
@@ -189,6 +200,11 @@ struct game_t {
   unsigned map_texture_count;
   unsigned map_texture_capacity;
   zpl_mutex map_texture_mutex;
+
+  texture_t *ui_textures;
+  unsigned ui_texture_count;
+  unsigned ui_texture_capacity;
+  zpl_mutex ui_texture_mutex;
 
   texture_t *font_textures;
   unsigned font_texture_count;
@@ -210,6 +226,7 @@ struct game_t {
   texture_bank_t immediate_texture_bank;
   terrain_bank_t terrain_bank;
   pawn_bank_t pawn_bank;
+  image_bank_t image_bank;
 
   // Game state, reset each frame
   // The renderer use this to draw the frame

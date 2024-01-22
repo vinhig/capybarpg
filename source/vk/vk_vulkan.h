@@ -10,7 +10,7 @@ typedef struct texture_t {
   unsigned char *data;
   char *label;
 
-  unsigned handle;
+  unsigned idx;
 } texture_t;
 
 typedef struct vk_model_t vk_model_t;
@@ -60,6 +60,9 @@ void VK_UploadMapTextures(vk_rend_t *rend, texture_t *textures, unsigned count);
 void VK_UploadFontTextures(vk_rend_t *rend, texture_t *textures,
                            unsigned count);
 
+void VK_UploadUITextures(vk_rend_t *rend, texture_t *textures,
+                         unsigned count);
+
 /**
  * @brief Update the list of drawable characters by adding `count` new textures.
  * @param rend The renderer, what do u think it is?
@@ -72,6 +75,8 @@ void VK_UpdateFontTextures(vk_rend_t *rend, texture_t *textures,
                            unsigned count);
 
 void VK_UploadSingleTexture(vk_rend_t *rend, texture_t *texture);
+
+void* VK_GetTextureHandle(vk_rend_t* rend, unsigned idx);
 
 const char *VK_GetError();
 

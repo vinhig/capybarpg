@@ -166,4 +166,8 @@ void VK_DestroyUI(vk_rend_t *rend) {
 
   ImGui::DestroyContext();
 }
+
+ImTextureID ImGui_AddTexture(VkSampler sampler, VkImageView image_view, VkImageLayout image_layout) {
+  return ImGui_ImplVulkan_AddTexture(sampler, image_view, image_layout);
+}
 }

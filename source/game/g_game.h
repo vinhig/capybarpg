@@ -161,6 +161,13 @@ typedef struct wall_t {
   char *nothing_path;
 } wall_t;
 
+typedef struct image_ui_t {
+  unsigned revision;
+  void *imgui_id;
+  char* path;
+  char* label;
+} image_ui_t;
+
 /// @brief Create a new game, allocating the memory for it. Read `main.toml`
 /// from the given base folder, and set it as the current scene. No assets
 /// loading occurs.
