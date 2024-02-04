@@ -26,6 +26,7 @@ ZPL_TABLE_DECLARE(extern, image_bank_t, G_Images_, image_ui_t)
 ZPL_TABLE_DECLARE(extern, terrain_bank_t, G_Terrains_, terrain_t)
 ZPL_TABLE_DECLARE(extern, character_bank_t, CL_Characters_, character_t)
 ZPL_TABLE_DECLARE(extern, pawn_bank_t, G_Pawns_, pawn_t)
+ZPL_TABLE_DECLARE(extern, facility_bank_t, G_Facilities_, facility_t)
 ZPL_TABLE_DECLARE(extern, inventory_t, G_Inventory_, float)
 
 typedef struct cpu_path_t {
@@ -226,6 +227,7 @@ struct game_t {
   texture_bank_t immediate_texture_bank;
   terrain_bank_t terrain_bank;
   pawn_bank_t pawn_bank;
+  facility_bank_t facility_bank;
   image_bank_t image_bank;
 
   // Game state, reset each frame
@@ -239,7 +241,7 @@ struct game_t {
   vk_rend_t *rend;
   client_t *client;
 
-  char current_ui_style[32];
+  char current_window_id[64];
 
   localization_t *localization;
 };

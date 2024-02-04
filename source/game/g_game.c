@@ -2,6 +2,7 @@
 #include "client/cl_client.h"
 #include "common/c_job.h"
 #include "common/c_profiler.h"
+#include "common/c_terminal.h"
 #include "stbi_image_write.h"
 #include <cglm/mat4.h>
 #include <cglm/util.h>
@@ -22,7 +23,6 @@
 #include <string.h>
 #include <sys/time.h>
 #include <time.h>
-#include <tracy/TracyC.h>
 #include <unistd.h>
 #include <vk/vk_vulkan.h>
 
@@ -76,7 +76,7 @@ game_t *G_CreateGame(client_t *client, char *base) {
   zpl_affinity_init(&af);
   // The workers[0] is actually the main thread ok?
   game->worker_count = af.thread_count;
-  printf("[VERBOSE] Game will run on %d threads.\n", game->worker_count);
+  printf(LOG_VERBOSE "Game will run on %d threads.\n", game->worker_count);
 
   game->job_sys2 = C_JobSystemCreate(game->worker_count);
 
@@ -90,15 +90,16 @@ game_t *G_CreateGame(client_t *client, char *base) {
   G_Walls_init(&game->wall_bank, zpl_heap_allocator());
   G_Terrains_init(&game->terrain_bank, zpl_heap_allocator());
   G_Pawns_init(&game->pawn_bank, zpl_heap_allocator());
+  G_Facilities_init(&game->facility_bank, zpl_heap_allocator());
   G_Images_init(&game->image_bank, zpl_heap_allocator());
 
   // Two freetype library because font loading may happen on different threads
   if (FT_Init_FreeType(&game->console_ft)) {
-    printf("[ERROR] Couldn't init freetype for the game.\n");
+    printf(LOG_ERROR "Couldn't init freetype for the game.\n");
     return false;
   }
   if (FT_Init_FreeType(&game->game_ft)) {
-    printf("[ERROR] Couldn't init freetype for the console.\n");
+    printf(LOG_ERROR "Couldn't init freetype for the console.\n");
     return false;
   }
   game->white_space = calloc(128 * 128, sizeof(char));
@@ -388,7 +389,7 @@ game_state_t *G_TickGame(client_t *client, game_t *game) {
   game->last_time = zpl_time_rel();
 
   if (!game->current_scene) {
-    printf("[WARNING] No current scene hehe...\n");
+    printf(LOG_WARNING "No current scene hehe...\n");
   } else {
     C_ProfilerStartBlock(PROFILER_BLOCK_SCENE_UPDATE);
     for (unsigned i = 0; i < game->current_scene->update_listener_count; i++) {
@@ -513,7 +514,7 @@ game_state_t *G_TickGame(client_t *client, game_t *game) {
     zpl_f64 delta = (zpl_time_rel() - game->last_time) /
                     1000.0f; // Delta time in milliseconds
     if (delta > 10.0f) {
-      printf("[WARNING] Anormaly long update time... %fms\n", delta);
+      printf(LOG_WARNING "Anormaly long update time... %fms\n", delta);
     }
   }
 
@@ -560,7 +561,7 @@ texture_t G_LoadSingleTexture(const char *path) {
 int G_Map_Create(game_t *game, unsigned w, unsigned h) {
   if (game->current_scene->map_count == 16) {
     printf(
-        "[ERROR] Max number of map reached (16), who needs that much map???\n");
+        LOG_ERROR "Max number of map reached (16), who needs that much map???\n");
     return -1;
   }
 
@@ -602,16 +603,16 @@ void G_Map_Create_QC(qcvm_t *qcvm) {
   float h = qcvm_get_parm_float(qcvm, 1);
 
   if (w <= 0.0f) {
-    printf("[ERROR] Can't initialize a map with a negative or null width (%f "
-           "was specified).\n",
+    printf(LOG_ERROR "Can't initialize a map with a negative or null width (%f "
+                     "was specified).\n",
            w);
     qcvm_return_int(qcvm, -1);
     return;
   }
 
   if (h <= 0.0f) {
-    printf("[ERROR] Can't initialize a map with a negative or null height (%f "
-           "was specified).\n",
+    printf(LOG_ERROR "Can't initialize a map with a negative or null height (%f "
+                     "was specified).\n",
            w);
     qcvm_return_int(qcvm, -1);
     return;
@@ -636,17 +637,17 @@ void G_Scene_SetCurrentMap_QC(qcvm_t *qcvm) {
   }
 
   if (map < 0 || map >= (int)game->current_scene->map_count) {
-    printf("[ERROR] Assertion G_Scene_SetCurrentMap_QC(map >= 0 || map < "
-           "game->map_count) "
-           "[map = %d, map_count = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_Scene_SetCurrentMap_QC(map >= 0 || map < "
+                     "game->map_count) "
+                     "[map = %d, map_count = %d] should be "
+                     "verified.\n",
            map, game->current_scene->map_count);
     return;
   }
 
   if (!scene) {
-    printf("[ERROR] Assertion G_Scene_SetCurrentMap_QC(map exists) [map = \"%s\"] "
-           "should be verified.\n",
+    printf(LOG_ERROR "Assertion G_Scene_SetCurrentMap_QC(map exists) [map = \"%s\"] "
+                     "should be verified.\n",
            scene_name);
     return;
   }
@@ -665,8 +666,8 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
   FILE *f = fopen(base_path, "r");
 
   if (!f) {
-    printf("[WARNING] The recipes file `%s`|`%s` doesn't seem to exist (skill "
-           "issue).\n",
+    printf(LOG_WARNING "The recipes file `%s`|`%s` doesn't seem to exist (skill "
+                       "issue).\n",
            path, base_path);
     return 0;
   }
@@ -681,7 +682,7 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
   err = zpl_json_parse(&recipes, content, zpl_heap_allocator());
 
   if (err != ZPL_JSON_ERROR_NONE) {
-    printf("[ERROR] The recipes file `%s` isn't a valid JSON.\n", path);
+    printf(LOG_ERROR "The recipes file `%s` isn't a valid JSON.\n", path);
     return 0;
   }
 
@@ -699,11 +700,9 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
   zpl_json_object *terrains = zpl_adt_find(&recipes, "terrains", false);
   zpl_json_object *materials = zpl_adt_find(&recipes, "materials", false);
   zpl_json_object *walls = zpl_adt_find(&recipes, "walls", false);
-  zpl_json_object *furnitures = zpl_adt_find(&recipes, "furnitures", false);
+  zpl_json_object *facilities = zpl_adt_find(&recipes, "facilities", false);
   zpl_json_object *pawns = zpl_adt_find(&recipes, "pawns", false);
   zpl_json_object *ui = zpl_adt_find(&recipes, "ui", false);
-
-  zpl_unused(furnitures);
 
   // The info extraction is a bit weird as mods can overwrite what was
   // previously specified. So if there isn't a element of a specific type in the
@@ -713,6 +712,175 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
   // mandatory field. Yes I know something like Rust or Go would have been
   // smarter than all this manual marshalling bullshit.
 
+  if (facilities && facilities->type == ZPL_ADT_TYPE_ARRAY) {
+    unsigned size = zpl_array_count(facilities->nodes);
+
+    for (unsigned i = 0; i < size; i++) {
+      zpl_adt_node *element = &facilities->nodes[i];
+      zpl_adt_node *id_node = zpl_adt_find(element, "id", false);
+
+      if (!id_node || id_node->type != ZPL_ADT_TYPE_STRING) {
+        printf(LOG_WARNING "The element %d in the 'facilities' list doesn't have "
+                           "an ID (of type string).\n",
+               i);
+        continue;
+      } else {
+        zpl_u64 key = zpl_fnv64(id_node->string, strlen(id_node->string));
+        // Does the bank contains this element? If not create an empty one.
+        facility_t *facility = G_Facilities_get(&game->facility_bank, key);
+
+        if (!facility) {
+          G_Facilities_set(&game->facility_bank, key, (facility_t){.revision = 0});
+          facility = G_Facilities_get(&game->facility_bank, key);
+        }
+
+        zpl_adt_node *name_node = zpl_adt_find(element, "name", false);
+        zpl_adt_node *sprites_node = zpl_adt_find(element, "sprites", false);
+        zpl_adt_node *tags_node = zpl_adt_find(element, "tags", false);
+        zpl_adt_node *health_node = zpl_adt_find(element, "health", false);
+
+        // TODO: G_Add_Recipes will **add** recipes present in this array. This is something to be tested!
+        zpl_adt_node *recipes_node = zpl_adt_find(element, "recipes", false);
+
+        zpl_adt_node *north_node = NULL;
+        zpl_adt_node *south_node = NULL;
+        zpl_adt_node *east_node = NULL;
+
+        facility->revision += 1;
+
+        if (name_node && name_node->type == ZPL_ADT_TYPE_STRING) {
+          if (facility->name) {
+            free(facility->name);
+          }
+          facility->name =
+              memcpy(malloc(strlen(name_node->string) + 1), name_node->string,
+                     strlen(name_node->string) + 1);
+        }
+
+        if (sprites_node && sprites_node->type == ZPL_ADT_TYPE_OBJECT) {
+          north_node = zpl_adt_find(sprites_node, "north", false);
+          south_node = zpl_adt_find(sprites_node, "south", false);
+          east_node = zpl_adt_find(sprites_node, "east", false);
+
+          if (north_node && north_node->type == ZPL_ADT_TYPE_STRING) {
+            if (facility->north_path) {
+              free(facility->north_path);
+            }
+            facility->north_path = memcpy(
+                malloc(strlen(north_node->string) + 1),
+                north_node->string, strlen(north_node->string) + 1);
+          }
+          if (south_node && south_node->type == ZPL_ADT_TYPE_STRING) {
+            if (facility->south_path) {
+              free(facility->south_path);
+            }
+            facility->south_path = memcpy(
+                malloc(strlen(south_node->string) + 1),
+                south_node->string, strlen(south_node->string) + 1);
+          }
+          if (east_node && east_node->type == ZPL_ADT_TYPE_STRING) {
+            if (facility->east_path) {
+              free(facility->east_path);
+            }
+            facility->east_path = memcpy(
+                malloc(strlen(east_node->string) + 1),
+                east_node->string, strlen(east_node->string) + 1);
+          }
+        }
+
+        if (tags_node && tags_node->type == ZPL_ADT_TYPE_ARRAY) {
+          unsigned tag_size = zpl_array_count(tags_node->nodes);
+
+          for (unsigned tt = 0; tt < tag_size; tt++) {
+            zpl_adt_node *the_tag = &tags_node->nodes[tt];
+
+            if (the_tag->type != ZPL_ADT_TYPE_STRING) {
+              printf(LOG_WARNING "All tags describing a facility should be of type string. This is not the case for facility `%s`. Tag number %d was the culprit.\n",
+                     facility->name,
+                     tt + 1);
+              continue;
+            }
+
+            zpl_u64 tag_key = zpl_fnv64(the_tag->string, strlen(the_tag->string));
+
+            if (facility->tag_count == MAX_NUMBER_OF_TAGS) {
+              printf(LOG_WARNING "Can't add a new tag for the facility called `%s`. Limit of %d tags per facility reached.\n"
+                                 "          This is an arbitrary limit, if you want to change it, modify the `#define MAX_NUMBER_OF_TAGS` in source code.\n",
+                     facility->name, MAX_NUMBER_OF_TAGS);
+              break;
+            }
+
+            facility->tags[facility->tag_count] = (tag_t){
+                .label = strcpy(malloc(strlen(the_tag->string)) + 1, the_tag->string),
+                .key = tag_key,
+            };
+            facility->tag_count++;
+          }
+        }
+
+        if (health_node && health_node->type == ZPL_ADT_TYPE_INTEGER) {
+          facility->base_health = health_node->integer;
+        }
+
+        if (recipes_node && recipes_node->type == ZPL_ADT_TYPE_ARRAY) {
+          unsigned recipe_size = zpl_array_count(recipes_node->nodes);
+
+          for (unsigned tt = 0; tt < recipe_size; tt++) {
+            if (facility->available_recipe_count == MAX_NUMBER_OF_RECIPES) {
+              printf(LOG_WARNING "Can't add a new recipe for the facility called `%s`. Limit of %d recipes per facility reached.\n"
+                                 "          This is an arbitrary limit, if you want to change it, modify the `#define MAX_NUMBER_OF_RECIPES` in source code.\n",
+                     facility->name, MAX_NUMBER_OF_RECIPES);
+              break;
+            }
+
+            zpl_adt_node *the_recipe = &recipes_node->nodes[tt];
+            zpl_adt_node *work_amount = zpl_adt_find(the_recipe, "work_amount", false);
+            zpl_adt_node *bonus_health = zpl_adt_find(the_recipe, "bonus_health", false);
+            zpl_adt_node *materials = zpl_adt_find(the_recipe, "materials", false);
+
+            if (!work_amount || work_amount->type != ZPL_ADT_TYPE_INTEGER) {
+              printf(LOG_WARNING "Field `work_amount` related to a recipe of the facility `%s` has to be present and of type integer."
+                                 "Recipe number %d is the culprit.\n",
+                     facility->name, tt);
+              continue;
+            }
+
+            if (!bonus_health || bonus_health->type != ZPL_ADT_TYPE_INTEGER) {
+              printf(LOG_WARNING "Field `bonus_health` related to a recipe of the facility `%s` has to be present and of type integer."
+                                 "Recipe number %d is the culprit.\n",
+                     facility->name, tt + 1);
+              continue;
+            }
+
+            if (!materials || materials->type != ZPL_ADT_TYPE_ARRAY) {
+              printf(LOG_WARNING "Field `materials` related to a recipe of the facility `%s` has to be present and of type array. Recipe number %d is the culprit.\n"
+                                 "          Please note that a `material` field (which is an array) can be empty by denoting it as `\"materials\": [],`\n",
+                     facility->name, tt);
+              continue;
+            }
+
+            recipe_t *new_recipe = &facility->available_recipes[facility->available_recipe_count];
+
+            unsigned material_count = zpl_array_count(materials->nodes);
+
+            for (unsigned mm = 0; mm < material_count; mm++) {
+              zpl_adt_node *the_material = &materials->nodes[mm];
+
+              zpl_adt_node *mat_id =  zpl_adt_find(the_material, "id", false);
+              zpl_adt_node *mat_amount =  zpl_adt_find(the_material, "id", false);
+
+              printf("mat_id == %s\n", mat_id->string);
+
+              zpl_u64 mat_key = zpl_fnv64(mat_id->string, strlen(mat_id->string));
+            }
+
+            facility->available_recipe_count++;
+          }
+        }
+      }
+    }
+  }
+
   if (ui && ui->type == ZPL_ADT_TYPE_ARRAY) {
     unsigned size = zpl_array_count(ui->nodes);
 
@@ -721,8 +889,8 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
       zpl_adt_node *id_node = zpl_adt_find(element, "id", false);
 
       if (!id_node || id_node->type != ZPL_ADT_TYPE_STRING) {
-        printf("[WARNING] The element %d in the 'ui' list doesn't have "
-               "an ID (of type string).\n",
+        printf(LOG_WARNING "The element %d in the 'ui' list doesn't have "
+                           "an ID (of type string).\n",
                i);
         continue;
       } else {
@@ -731,7 +899,7 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
         image_ui_t *image = G_Images_get(&game->image_bank, key);
 
         if (!image) {
-          G_Images_set(&game->image_bank, key, (image_ui_t){.revision = 1});
+          G_Images_set(&game->image_bank, key, (image_ui_t){.revision = 0});
           image = G_Images_get(&game->image_bank, key);
         }
         image->label = strcpy(malloc(strlen(id_node->string) + 1), id_node->string);
@@ -743,11 +911,9 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
           image->path =
               memcpy(malloc(strlen(path_node->string) + 1), path_node->string,
                      strlen(path_node->string) + 1);
-
-          printf("let's go we registered `%s` under `%s`\n", image->path, id_node->string);
         } else {
-          printf("[WARNING] The element %d (id=`%s`) in the 'ui' list doesn't have "
-                 "a path (of type string).\n",
+          printf(LOG_WARNING "The element %d (id=`%s`) in the 'ui' list doesn't have "
+                             "a path (of type string).\n",
                  i, id_node->string);
         }
       }
@@ -762,8 +928,8 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
       zpl_adt_node *id_node = zpl_adt_find(element, "id", false);
 
       if (!id_node || id_node->type != ZPL_ADT_TYPE_STRING) {
-        printf("[WARNING] The element %d in the 'terrains' list doesn't have "
-               "an ID (of type string).\n",
+        printf(LOG_WARNING "The element %d in the 'terrains' list doesn't have "
+                           "an ID (of type string).\n",
                i);
         continue;
       } else {
@@ -772,7 +938,7 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
         terrain_t *terrain = G_Terrains_get(&game->terrain_bank, key);
 
         if (!terrain) {
-          G_Terrains_set(&game->terrain_bank, key, (terrain_t){.revision = 1});
+          G_Terrains_set(&game->terrain_bank, key, (terrain_t){.revision = 0});
           terrain = G_Terrains_get(&game->terrain_bank, key);
         } else {
           terrain->revision += 1;
@@ -836,8 +1002,8 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
       zpl_adt_node *id_node = zpl_adt_find(element, "id", false);
 
       if (!id_node || id_node->type != ZPL_ADT_TYPE_STRING) {
-        printf("[WARNING] The element %d in the 'materials' list doesn't have "
-               "an ID (of type string).\n",
+        printf(LOG_WARNING "The element %d in the 'materials' list doesn't have "
+                           "an ID (of type string).\n",
                i);
         continue;
       } else {
@@ -920,8 +1086,8 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
       zpl_adt_node *id_node = zpl_adt_find(element, "id", false);
 
       if (!id_node || id_node->type != ZPL_ADT_TYPE_STRING) {
-        printf("[WARNING] The element %d in the 'walls' list doesn't have "
-               "an ID (of type string).\n",
+        printf(LOG_WARNING "The element %d in the 'walls' list doesn't have "
+                           "an ID (of type string).\n",
                i);
         continue;
       } else {
@@ -1148,8 +1314,8 @@ bool G_Add_Recipes(game_t *game, const char *path, bool required) {
       zpl_adt_node *id_node = zpl_adt_find(element, "id", false);
 
       if (!id_node || id_node->type != ZPL_ADT_TYPE_STRING) {
-        printf("[WARNING] The element %d in the 'pawns' list doesn't have "
-               "an ID (of type string).\n",
+        printf(LOG_WARNING "The element %d in the 'pawns' list doesn't have "
+                           "an ID (of type string).\n",
                i);
         continue;
       } else {
@@ -1287,9 +1453,9 @@ void G_Item_AddAmount_QC(qcvm_t *qcvm) {
 
   if (map < 0 || map >= (int)game->current_scene->map_count) {
     printf(
-        "[ERROR] Assertion G_Item_AddAmount_QC(map >= 0 || map < game->map_count) "
-        "[map = %d, map_count = %d] should be "
-        "verified.\n",
+        LOG_ERROR "Assertion G_Item_AddAmount_QC(map >= 0 || map < game->map_count) "
+                  "[map = %d, map_count = %d] should be "
+                  "verified.\n",
         map, game->current_scene->map_count);
     return;
   }
@@ -1297,19 +1463,19 @@ void G_Item_AddAmount_QC(qcvm_t *qcvm) {
   map_t *the_map = &game->current_scene->maps[map];
 
   if (x < 0.0f || x >= the_map->w) {
-    printf("[ERROR] Assertion G_Item_AddAmount_QC(x >= 0 || x < "
-           "map->w) "
-           "[x = %d, map->w = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_Item_AddAmount_QC(x >= 0 || x < "
+                     "map->w) "
+                     "[x = %d, map->w = %d] should be "
+                     "verified.\n",
            (unsigned)x, the_map->w);
     return;
   }
 
   if (y < 0.0f || y >= the_map->h) {
-    printf("[ERROR] Assertion G_Item_AddAmount_QC(y >= 0 || y < "
-           "map->h) "
-           "[y = %d, map->h = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_Item_AddAmount_QC(y >= 0 || y < "
+                     "map->h) "
+                     "[y = %d, map->h = %d] should be "
+                     "verified.\n",
            (unsigned)x, the_map->h);
     return;
   }
@@ -1318,16 +1484,16 @@ void G_Item_AddAmount_QC(qcvm_t *qcvm) {
   material_t *the_item = G_Materials_get(&game->material_bank, key);
 
   if (!the_item) {
-    printf("[ERROR] Assertion G_Item_AddAmount_QC(recipe exists) [recipe = \"%s\"] "
-           "should be verified.\n",
+    printf(LOG_ERROR "Assertion G_Item_AddAmount_QC(recipe exists) [recipe = \"%s\"] "
+                     "should be verified.\n",
            recipe);
     return;
   }
 
   if (amount <= 0.0f) {
-    printf("[ERROR] Assertion G_Item_AddAmount_QC(amount is positive) [amount = "
-           "%.03f] "
-           "should be verified.\n",
+    printf(LOG_ERROR "Assertion G_Item_AddAmount_QC(amount is positive) [amount = "
+                     "%.03f] "
+                     "should be verified.\n",
            amount);
     return;
   }
@@ -1382,9 +1548,9 @@ void G_Item_RemoveAmount_QC(qcvm_t *qcvm) {
 
   if (map < 0 || map >= (int)game->current_scene->map_count) {
     printf(
-        "[ERROR] Assertion G_Item_RemoveAmount_QC(map >= 0 || map < game->map_count) "
-        "[map = %d, map_count = %d] should be "
-        "verified.\n",
+        LOG_ERROR "Assertion G_Item_RemoveAmount_QC(map >= 0 || map < game->map_count) "
+                  "[map = %d, map_count = %d] should be "
+                  "verified.\n",
         map, game->current_scene->map_count);
     return;
   }
@@ -1392,19 +1558,19 @@ void G_Item_RemoveAmount_QC(qcvm_t *qcvm) {
   map_t *the_map = &game->current_scene->maps[map];
 
   if (x < 0.0f || x >= the_map->w) {
-    printf("[ERROR] Assertion G_Item_RemoveAmount_QC(x >= 0 || x < "
-           "map->w) "
-           "[x = %d, map->w = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_Item_RemoveAmount_QC(x >= 0 || x < "
+                     "map->w) "
+                     "[x = %d, map->w = %d] should be "
+                     "verified.\n",
            (unsigned)x, the_map->w);
     return;
   }
 
   if (y < 0.0f || y >= the_map->h) {
-    printf("[ERROR] Assertion G_Item_RemoveAmount_QC(y >= 0 || y < "
-           "map->h) "
-           "[y = %d, map->h = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_Item_RemoveAmount_QC(y >= 0 || y < "
+                     "map->h) "
+                     "[y = %d, map->h = %d] should be "
+                     "verified.\n",
            (unsigned)x, the_map->h);
     return;
   }
@@ -1413,16 +1579,16 @@ void G_Item_RemoveAmount_QC(qcvm_t *qcvm) {
   material_t *the_item = G_Materials_get(&game->material_bank, key);
 
   if (!the_item) {
-    printf("[ERROR] Assertion G_Item_RemoveAmount_QC(recipe exists) [recipe = \"%s\"] "
-           "should be verified.\n",
+    printf(LOG_ERROR "Assertion G_Item_RemoveAmount_QC(recipe exists) [recipe = \"%s\"] "
+                     "should be verified.\n",
            recipe);
     return;
   }
 
   if (amount <= 0.0f) {
-    printf("[ERROR] Assertion G_Item_RemoveAmount_QC(amount is positive) [amount = "
-           "%.03f] "
-           "should be verified.\n",
+    printf(LOG_ERROR "Assertion G_Item_RemoveAmount_QC(amount is positive) [amount = "
+                     "%.03f] "
+                     "should be verified.\n",
            amount);
     return;
   }
@@ -1462,9 +1628,9 @@ void G_Item_GetAmount_QC(qcvm_t *qcvm) {
 
   if (map < 0 || map >= (int)game->current_scene->map_count) {
     printf(
-        "[ERROR] Assertion G_Item_GetAmount_QC(map >= 0 || map < game->map_count) "
-        "[map = %d, map_count = %d] should be "
-        "verified.\n",
+        LOG_ERROR "Assertion G_Item_GetAmount_QC(map >= 0 || map < game->map_count) "
+                  "[map = %d, map_count = %d] should be "
+                  "verified.\n",
         map, game->current_scene->map_count);
     return;
   }
@@ -1472,26 +1638,26 @@ void G_Item_GetAmount_QC(qcvm_t *qcvm) {
   map_t *the_map = &game->current_scene->maps[map];
 
   if (x < 0.0f || x >= the_map->w) {
-    printf("[ERROR] Assertion G_Item_GetAmount_QC(x >= 0 || x < "
-           "map->w) "
-           "[x = %d, map->w = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_Item_GetAmount_QC(x >= 0 || x < "
+                     "map->w) "
+                     "[x = %d, map->w = %d] should be "
+                     "verified.\n",
            (unsigned)x, the_map->w);
     return;
   }
 
   if (y < 0.0f || y >= the_map->h) {
-    printf("[ERROR] Assertion G_Item_GetAmount_QC(y >= 0 || y < "
-           "map->h) "
-           "[y = %d, map->h = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_Item_GetAmount_QC(y >= 0 || y < "
+                     "map->h) "
+                     "[y = %d, map->h = %d] should be "
+                     "verified.\n",
            (unsigned)x, the_map->h);
     return;
   }
 
   if (!the_item) {
-    printf("[ERROR] Assertion G_Item_GetAmount_QC(recipe exists) [recipe = \"%s\"] "
-           "should be verified.\n",
+    printf(LOG_ERROR "Assertion G_Item_GetAmount_QC(recipe exists) [recipe = \"%s\"] "
+                     "should be verified.\n",
            recipe);
     return;
   }
@@ -1545,10 +1711,10 @@ void G_Item_FindNearest_QC(qcvm_t *qcvm) {
   int start_search = (int)qcvm_get_parm_float(qcvm, 4);
 
   if (map < 0 || map >= (int)game->current_scene->map_count) {
-    printf("[ERROR] Assertion G_Item_FindNearest_QC(map >= 0 || map < "
-           "game->map_count) "
-           "[map = %d, map_count = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_Item_FindNearest_QC(map >= 0 || map < "
+                     "game->map_count) "
+                     "[map = %d, map_count = %d] should be "
+                     "verified.\n",
            map, game->current_scene->map_count);
     return;
   }
@@ -1556,19 +1722,19 @@ void G_Item_FindNearest_QC(qcvm_t *qcvm) {
   map_t *the_map = &game->current_scene->maps[map];
 
   if (x < 0.0f || x >= the_map->w) {
-    printf("[ERROR] Assertion G_Item_FindNearest_QC(x >= 0 || x < "
-           "map->w) "
-           "[x = %d, map->w = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_Item_FindNearest_QC(x >= 0 || x < "
+                     "map->w) "
+                     "[x = %d, map->w = %d] should be "
+                     "verified.\n",
            (unsigned)x, the_map->w);
     return;
   }
 
   if (y < 0.0f || y >= the_map->h) {
-    printf("[ERROR] Assertion G_Item_FindNearest_QC(y >= 0 || y < "
-           "map->y) "
-           "[y = %d, map->h = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_Item_FindNearest_QC(y >= 0 || y < "
+                     "map->y) "
+                     "[y = %d, map->h = %d] should be "
+                     "verified.\n",
            (unsigned)y, the_map->h);
     return;
   }
@@ -1577,9 +1743,9 @@ void G_Item_FindNearest_QC(qcvm_t *qcvm) {
   material_t *the_material = G_Materials_get(&game->material_bank, key);
 
   if (!the_material) {
-    printf("[ERROR] Assertion G_Item_FindNearest_QC(recipe exists) [recipe = "
-           "\"%s\"] "
-           "should be verified.\n",
+    printf(LOG_ERROR "Assertion G_Item_FindNearest_QC(recipe exists) [recipe = "
+                     "\"%s\"] "
+                     "should be verified.\n",
            recipe);
     return;
   }
@@ -1634,10 +1800,10 @@ void G_NeutralAnimal_Add_QC(qcvm_t *qcvm) {
 
   int map = qcvm_get_parm_int(qcvm, 0);
   if (map < 0 || map >= (int)game->current_scene->map_count) {
-    printf("[ERROR] Assertion G_NeutralAnimal_Add(map >= 0 || map < "
-           "game->map_count) "
-           "[map = %d, map_count = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_NeutralAnimal_Add(map >= 0 || map < "
+                     "game->map_count) "
+                     "[map = %d, map_count = %d] should be "
+                     "verified.\n",
            map, game->current_scene->map_count);
     return;
   }
@@ -1645,19 +1811,19 @@ void G_NeutralAnimal_Add_QC(qcvm_t *qcvm) {
   map_t *the_map = &game->current_scene->maps[map];
 
   if (x < 0.0f || x >= the_map->w) {
-    printf("[ERROR] Assertion G_NeutralAnimal_Add(x >= 0 || x < "
-           "map->w) "
-           "[x = %d, map->w = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_NeutralAnimal_Add(x >= 0 || x < "
+                     "map->w) "
+                     "[x = %d, map->w = %d] should be "
+                     "verified.\n",
            (unsigned)x, the_map->w);
     return;
   }
 
   if (y < 0.0f || y >= the_map->h) {
-    printf("[ERROR] Assertion G_NeutralAnimal_Add(y >= 0 || y < "
-           "map->y) "
-           "[y = %d, map->h = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_NeutralAnimal_Add(y >= 0 || y < "
+                     "map->y) "
+                     "[y = %d, map->h = %d] should be "
+                     "verified.\n",
            (unsigned)y, the_map->h);
     return;
   }
@@ -1666,9 +1832,9 @@ void G_NeutralAnimal_Add_QC(qcvm_t *qcvm) {
   pawn_t *the_pawn = G_Pawns_get(&game->pawn_bank, key);
 
   if (!the_pawn) {
-    printf("[ERROR] Assertion G_NeutralAnimal_Add(recipe exists) [recipe = "
-           "\"%s\"] "
-           "should be verified.\n",
+    printf(LOG_ERROR "Assertion G_NeutralAnimal_Add(recipe exists) [recipe = "
+                     "\"%s\"] "
+                     "should be verified.\n",
            recipe);
     return;
   }
@@ -1698,10 +1864,10 @@ void G_Colonist_Add_QC(qcvm_t *qcvm) {
 
   int map = qcvm_get_parm_int(qcvm, 0);
   if (map < 0 || map >= (int)game->current_scene->map_count) {
-    printf("[ERROR] Assertion G_Colonist_Add_QC(map >= 0 || map < "
-           "game->map_count) "
-           "[map = %d, map_count = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_Colonist_Add_QC(map >= 0 || map < "
+                     "game->map_count) "
+                     "[map = %d, map_count = %d] should be "
+                     "verified.\n",
            map, game->current_scene->map_count);
     return;
   }
@@ -1709,19 +1875,19 @@ void G_Colonist_Add_QC(qcvm_t *qcvm) {
   map_t *the_map = &game->current_scene->maps[map];
 
   if (x < 0.0f || x >= the_map->w) {
-    printf("[ERROR] Assertion G_Colonist_Add_QC(x >= 0 || x < "
-           "map->w) "
-           "[x = %d, map->w = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_Colonist_Add_QC(x >= 0 || x < "
+                     "map->w) "
+                     "[x = %d, map->w = %d] should be "
+                     "verified.\n",
            (unsigned)x, the_map->w);
     return;
   }
 
   if (y < 0.0f || y >= the_map->h) {
-    printf("[ERROR] Assertion G_Colonist_Add_QC(y >= 0 || y < "
-           "map->y) "
-           "[y = %d, map->h = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_Colonist_Add_QC(y >= 0 || y < "
+                     "map->y) "
+                     "[y = %d, map->h = %d] should be "
+                     "verified.\n",
            (unsigned)y, the_map->h);
     return;
   }
@@ -1730,9 +1896,9 @@ void G_Colonist_Add_QC(qcvm_t *qcvm) {
   pawn_t *the_pawn = G_Pawns_get(&game->pawn_bank, key);
 
   if (!the_pawn) {
-    printf("[ERROR] Assertion G_Colonist_Add_QC(recipe exists) [recipe = "
-           "\"%s\"] "
-           "should be verified.\n",
+    printf(LOG_ERROR "Assertion G_Colonist_Add_QC(recipe exists) [recipe = "
+                     "\"%s\"] "
+                     "should be verified.\n",
            recipe);
     return;
   }
@@ -1766,8 +1932,8 @@ void G_Draw_Image_Relative(game_t *game, const char *path, float w, float h,
     texture_t t = G_LoadSingleTexture(complete_path);
 
     if (!t.data) {
-      printf("[ERROR] Couldn't load texture referenced in "
-             "`G_Draw_Image_Relative`, namely \"%s\".\n",
+      printf(LOG_ERROR "Couldn't load texture referenced in "
+                       "`G_Draw_Image_Relative`, namely \"%s\".\n",
              path);
 
       return;
@@ -1861,7 +2027,7 @@ void G_Scene_Run(game_t *game, const char *scene_name) {
   }
 
   if (scene == NULL) {
-    printf("[ERROR] Current game doesn't have a scene with that name `%s`.\n",
+    printf(LOG_ERROR "Current game doesn't have a scene with that name `%s`.\n",
            scene_name);
     return;
   }
@@ -1933,7 +2099,7 @@ void G_WorkerSetupTileText(void *data, unsigned thread_idx) {
     } else if (the_tile->stack_count == 3) {
       offsets = offsets_3;
     } else {
-      printf("[ERROR] G_WorkerSetupTileText assumes there is at most 3 stacks per tile. Stack count is %d on (%d,%d).\n", the_tile->stack_count, col, the_job->row);
+      printf(LOG_ERROR "G_WorkerSetupTileText assumes there is at most 3 stacks per tile. Stack count is %d on (%d,%d).\n", the_tile->stack_count, col, the_job->row);
     }
 
     for (unsigned i = 0; i < the_tile->stack_count; i++) {
@@ -2015,8 +2181,8 @@ void G_WorkerLoadFont(void *data, unsigned thread_idx) {
   FT_Library ft = the_job->ft;
 
   if (FT_New_Face(ft, the_job->path, 0, the_job->face)) {
-    printf("[ERROR] Couldn't load font family "
-           "(\"%s\") for the console.\n",
+    printf(LOG_ERROR "Couldn't load font family "
+                     "(\"%s\") for the console.\n",
            the_job->path);
     return;
   }
@@ -2029,7 +2195,7 @@ void G_WorkerLoadFont(void *data, unsigned thread_idx) {
   for (unsigned i = 0; i < sizeof(alphabet) / sizeof(wchar_t); i++) {
     if (FT_Load_Char(*(the_job->face), alphabet[i],
                      FT_LOAD_RENDER | FT_LOAD_COLOR)) {
-      printf("[WARNING] Ooopsie doopsie, the char `%lc` isn't supported...\n",
+      printf(LOG_WARNING "Ooopsie doopsie, the char `%lc` isn't supported...\n",
              alphabet[i]);
       continue;
     }
@@ -2117,11 +2283,10 @@ void G_WorkerLoadTexture(void *data, unsigned thread_idx) {
     strcpy(tex.label, the_job->label);
 
     // Image shouldn't be flipped vertically
-    
   }
 
   if (!tex.data) {
-    printf("[ERROR] Couldn't load texture `%s` | `%s` (in a worker thread).\n",
+    printf(LOG_ERROR "Couldn't load texture `%s` | `%s` (in a worker thread).\n",
            the_job->path, the_path);
     return;
   }
@@ -2458,8 +2623,6 @@ void G_Load_Game(game_t *game) {
   for (unsigned i = 0; i < game->ui_texture_count; i++) {
     void *imgui_id = VK_GetTextureHandle(game->rend, game->ui_textures[i].idx);
 
-    printf("game->ui_textures[%d].idx == %d\n", i, game->ui_textures[i].idx);
-
     // Get original image from its label
     zpl_u64 key = zpl_fnv64(game->ui_textures[i].label, strlen(game->ui_textures[i].label));
     image_ui_t *image = G_Images_get(&game->image_bank, key);
@@ -2467,7 +2630,7 @@ void G_Load_Game(game_t *game) {
     if (image) {
       image->imgui_id = imgui_id;
     } else {
-      printf("[ERROR] An texture has been uploaded as a UI image, but no corresponding UI image was found (label=`%s`).\n", game->ui_textures[i].label);
+      printf(LOG_ERROR "An texture has been uploaded as a UI image, but no corresponding UI image was found (label=`%s`).\n", game->ui_textures[i].label);
     }
   }
 
@@ -2478,7 +2641,7 @@ void G_Load_Game(game_t *game) {
 
   free(texture_jobs);
 
-  printf("[VERBOSE] Loading game took `%f` ms\n",
+  printf(LOG_VERBOSE "Loading game took `%f` ms\n",
          (float)(zpl_time_rel() - now) * 100);
 
   CL_SetClientState(game->client, CLIENT_RUNNING);
@@ -2554,8 +2717,8 @@ void G_Add_Listener(game_t *game, listener_type_t type, const char *attachment,
 
     if (the_scene) {
       if (the_scene->start_listener_count == 16) {
-        printf("[ERROR] Reached max number of `G_SCENE_START` for the scene "
-               "`%s`.\n",
+        printf(LOG_ERROR "Reached max number of `G_SCENE_START` for the scene "
+                         "`%s`.\n",
                attachment);
 
         return;
@@ -2564,9 +2727,9 @@ void G_Add_Listener(game_t *game, listener_type_t type, const char *attachment,
           func;
       the_scene->start_listener_count++;
     } else {
-      printf("[ERROR] QuakeC code specified a non-existent scene `%s` when "
-             "trying "
-             "to attach a `G_SCENE_START` listener.\n",
+      printf(LOG_ERROR "QuakeC code specified a non-existent scene `%s` when "
+                       "trying "
+                       "to attach a `G_SCENE_START` listener.\n",
              attachment);
     }
 
@@ -2577,8 +2740,8 @@ void G_Add_Listener(game_t *game, listener_type_t type, const char *attachment,
 
     if (the_scene) {
       if (the_scene->end_listener_count == 16) {
-        printf("[ERROR] Reached max number of `G_SCENE_END` for the scene "
-               "`%s`.\n",
+        printf(LOG_ERROR "Reached max number of `G_SCENE_END` for the scene "
+                         "`%s`.\n",
                attachment);
 
         return;
@@ -2586,9 +2749,9 @@ void G_Add_Listener(game_t *game, listener_type_t type, const char *attachment,
       the_scene->end_listeners[the_scene->end_listener_count].qcvm_func = func;
       the_scene->end_listener_count++;
     } else {
-      printf("[ERROR] QuakeC code specified a non-existent scene `%s` when "
-             "trying "
-             "to attach a `G_SCENE_END` listener.\n",
+      printf(LOG_ERROR "QuakeC code specified a non-existent scene `%s` when "
+                       "trying "
+                       "to attach a `G_SCENE_END` listener.\n",
              attachment);
     }
 
@@ -2599,8 +2762,8 @@ void G_Add_Listener(game_t *game, listener_type_t type, const char *attachment,
 
     if (the_scene) {
       if (the_scene->update_listener_count == 16) {
-        printf("[ERROR] Reached max number of `G_SCENE_UPDATE` for the scene "
-               "`%s`.\n",
+        printf(LOG_ERROR "Reached max number of `G_SCENE_UPDATE` for the scene "
+                         "`%s`.\n",
                attachment);
 
         return;
@@ -2609,9 +2772,9 @@ void G_Add_Listener(game_t *game, listener_type_t type, const char *attachment,
           func;
       the_scene->update_listener_count++;
     } else {
-      printf("[ERROR] QuakeC code specified a non-existent scene `%s` when "
-             "trying "
-             "to attach a `G_SCENE_UPDATE` listener.\n",
+      printf(LOG_ERROR "QuakeC code specified a non-existent scene `%s` when "
+                       "trying "
+                       "to attach a `G_SCENE_UPDATE` listener.\n",
              attachment);
     }
 
@@ -2622,8 +2785,8 @@ void G_Add_Listener(game_t *game, listener_type_t type, const char *attachment,
 
     if (the_scene) {
       if (the_scene->camera_update_listener_count == 16) {
-        printf("[ERROR] Reached max number of `G_CAMERA_UPDATE` for the scene "
-               "`%s`.\n",
+        printf(LOG_ERROR "Reached max number of `G_CAMERA_UPDATE` for the scene "
+                         "`%s`.\n",
                attachment);
 
         return;
@@ -2633,9 +2796,9 @@ void G_Add_Listener(game_t *game, listener_type_t type, const char *attachment,
           .qcvm_func = func;
       the_scene->camera_update_listener_count++;
     } else {
-      printf("[ERROR] QuakeC code specified a non-existent scene `%s` when "
-             "trying "
-             "to attach a `G_CAMERA_UPDATE` listener.\n",
+      printf(LOG_ERROR "QuakeC code specified a non-existent scene `%s` when "
+                       "trying "
+                       "to attach a `G_CAMERA_UPDATE` listener.\n",
              attachment);
     }
 
@@ -2646,8 +2809,8 @@ void G_Add_Listener(game_t *game, listener_type_t type, const char *attachment,
       scene_t *the_scene = &game->scenes[s];
 
       if (the_scene->agent_think_listener_count == 16) {
-        printf("[ERROR] Reached max number of `G_CAMERA_UPDATE` for the scene "
-               "`%s`.\n",
+        printf(LOG_ERROR "Reached max number of `G_CAMERA_UPDATE` for the scene "
+                         "`%s`.\n",
                the_scene->name);
 
         return;
@@ -2671,14 +2834,14 @@ void G_Add_Listener_QC(qcvm_t *qcvm) {
   const char *func = qcvm_get_parm_string(qcvm, 2);
 
   if (listener_type >= G_LISTENER_TYPE_COUNT) {
-    printf("[ERROR] QuakeC code specified an invalid listener type.\n");
+    printf(LOG_ERROR "QuakeC code specified an invalid listener type.\n");
     return;
   }
 
   int func_id = qcvm_find_function(qcvm, func);
   if (func_id < 1) {
-    printf("[ERROR] QuakeC code specified an invalid function for the "
-           "listener callback.\n");
+    printf(LOG_ERROR "QuakeC code specified an invalid function for the "
+                     "listener callback.\n");
     return;
   }
 
@@ -2730,7 +2893,7 @@ void G_Input_GetAxisValue_QC(qcvm_t *qcvm) {
 
 void G_Input_GetLeftMouseState_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
-  
+
   unsigned r = CL_GetInput(game->client)->mouse_left;
   qcvm_return_int(qcvm, r);
 }
@@ -2934,13 +3097,13 @@ void G_QCVMInstall(qcvm_t *qcvm) {
       .type = QCVM_FLOAT,
   };
 
-    qcvm_export_t export_G_Input_GetLeftMouseState = {
+  qcvm_export_t export_G_Input_GetLeftMouseState = {
       .func = G_Input_GetLeftMouseState_QC,
       .name = "G_Input_GetLeftMouseState",
       .type = QCVM_INT,
   };
 
-    qcvm_export_t export_G_Input_GetRightMouseState = {
+  qcvm_export_t export_G_Input_GetRightMouseState = {
       .func = G_Input_GetRightMouseState_QC,
       .name = "G_Input_GetRightMouseState",
       .type = QCVM_INT,
@@ -3147,7 +3310,7 @@ bool G_Load(client_t *client, game_t *game) {
   // Run the QuakeC main function on the first vm
   int main_func = qcvm_find_function(game->qcvms[0], "main");
   if (main_func < 1) {
-    printf("[ERROR] No main function in `%s`.\n", progs_dat);
+    printf(LOG_ERROR "No main function in `%s`.\n", progs_dat);
     return false;
   }
   qcvm_run(game->qcvms[0], main_func);

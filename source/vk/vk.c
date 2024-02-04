@@ -1,7 +1,8 @@
-#include "vk/vk_private.h"
-#include "vk/vk_system.h"
-#include "vk/vk_vulkan.h"
 #include <cimgui.h>
+#include <common/c_terminal.h>
+#include <vk/vk_private.h>
+#include <vk/vk_system.h>
+#include <vk/vk_vulkan.h>
 
 #include <cimgui.h>
 #include <stdbool.h>
@@ -970,8 +971,8 @@ vk_rend_t *VK_CreateRend(client_t *client,
     VkResult r = vkAllocateDescriptorSets(
         rend->device, &global_textures_desc_info, &rend->map_textures_desc_set);
     if (r != VK_SUCCESS) {
-      printf("[ERROR] vkAllocateDescriptorSets(rend->map_textures_desc_set)"
-             "failed. Error code: %d\n",
+      printf(LOG_ERROR "vkAllocateDescriptorSets(rend->map_textures_desc_set)"
+                       "failed. Error code: %d\n",
              r);
       VK_PUSH_ERROR("oh no\n");
     }
@@ -979,8 +980,8 @@ vk_rend_t *VK_CreateRend(client_t *client,
     r = vkAllocateDescriptorSets(rend->device, &global_textures_desc_info,
                                  &rend->font_textures_desc_set);
     if (r != VK_SUCCESS) {
-      printf("[ERROR] vkAllocateDescriptorSets(rend->font_textures_desc_set) "
-             "failed. Error code: %d\n",
+      printf(LOG_ERROR "vkAllocateDescriptorSets(rend->font_textures_desc_set) "
+                       "failed. Error code: %d\n",
              r);
       VK_PUSH_ERROR("oh no\n");
     }
@@ -1426,6 +1427,8 @@ void VK_CreateTexturesDescriptor(vk_rend_t *rend, vk_assets_t *assets,
 
   free(writes);
   free(image_infos);
+
+  printf(LOG_VERBOSE "Rendered created a descriptor with %d VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER.\n", assets->texture_count);
 }
 
 void VK_UploadMapTextures(vk_rend_t *rend, texture_t *textures,
@@ -1929,9 +1932,6 @@ void VK_UploadUITextures(vk_rend_t *rend, texture_t *textures,
   };
 
   vkQueueSubmit(rend->graphics_queue, 1, &submit_info, rend->transfer_fence);
-
-  VK_CreateTexturesDescriptor(rend, &rend->font_assets,
-                              rend->font_textures_desc_set, rend->font_sampler);
 }
 
 void VK_UpdateFontTextures(vk_rend_t *rend, texture_t *textures,

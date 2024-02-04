@@ -5,7 +5,7 @@
 #include "SDL_video.h"
 #include "cl_input.h"
 #include "vk/vk_vulkan.h"
-
+#include "common/c_terminal.h"
 #include <SDL2/SDL.h>
 #include <errno.h>
 #include <minini/minIni.h>
@@ -255,7 +255,7 @@ client_t *CL_CreateClient(const char *title, client_desc_t *desc) {
     SDL_JoystickOpen(i);
   }
 
-  printf("[VERBOSE] %d joystick(s) connected.\n", SDL_NumJoysticks());
+  printf(LOG_VERBOSE "%d joystick(s) connected.\n", SDL_NumJoysticks());
 
   CL_InitConsole(client, &client->console);
 

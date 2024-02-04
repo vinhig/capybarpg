@@ -18,6 +18,9 @@ ZPL_TABLE_DEFINE(terrain_bank_t, G_Terrains_, terrain_t)
 ZPL_TABLE_DECLARE(extern, pawn_bank_t, G_Pawns_, pawn_t)
 ZPL_TABLE_DEFINE(pawn_bank_t, G_Pawns_, pawn_t)
 
+ZPL_TABLE_DECLARE(extern, facility_bank_t, G_Facilities_, facility_t)
+ZPL_TABLE_DEFINE(facility_bank_t, G_Facilities_, facility_t)
+
 ZPL_TABLE_DECLARE(extern, image_bank_t, G_Images_, image_ui_t)
 ZPL_TABLE_DEFINE(image_bank_t, G_Images_, image_ui_t)
 

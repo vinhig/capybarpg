@@ -1,7 +1,7 @@
 #include "vk/vk_system.h"
 #include "vk/vk_private.h"
 #include "vk/vk_vulkan.h"
-
+#include <common/c_terminal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -499,8 +499,13 @@ bool VK_InitECS(vk_rend_t *rend, unsigned count) {
     };
 
     VkDescriptorSetLayoutBinding bindings[] = {
-        map,     entities, transforms, model_transforms,
-        sprites, agents,   immovables,
+        map,
+        entities,
+        transforms,
+        model_transforms,
+        sprites,
+        agents,
+        immovables,
     };
 
     VkDescriptorBindingFlags bindless_flags[] = {
@@ -1040,7 +1045,7 @@ int VK_Add_Entity(vk_rend_t *rend, unsigned signature) {
   size_t offset = rend->ecs->entity_count * sizeof(unsigned);
   ((unsigned *)(rend->ecs->entities))[rend->ecs->entity_count] = signature;
   if (rend->ecs->entity_count == 3000) {
-    printf("[ERROR] The ECS reached max number of entities (3000).\n");
+    printf(LOG_ERROR "The ECS reached max number of entities (3000).\n");
     return -1;
   }
   rend->ecs->entity_count++;

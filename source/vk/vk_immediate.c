@@ -1,11 +1,11 @@
 #include "client/cl_client.h"
 #include "common/c_profiler.h"
+#include "game/g_game.h"
 #include "vk/vk_private.h"
 #include "vk/vk_system.h"
 #include "vk/vk_vulkan.h"
-
-#include "game/g_game.h"
 #include "vk_mem_alloc.h"
+#include <common/c_terminal.h>
 
 #include <stdbool.h>
 #include <stdlib.h>
@@ -105,8 +105,8 @@ bool VK_InitImmediate(vk_rend_t *rend) {
                                           &rend->text->text_set);
 
     if (r != VK_SUCCESS) {
-      printf("[ERROR] vkAllocateDescriptorSets(rend->text->text_set) failed. "
-             "Error code is %d\n",
+      printf(LOG_ERROR "vkAllocateDescriptorSets(rend->text->text_set) failed. "
+                       "Error code is %d\n",
              r);
       return false;
     }

@@ -1,5 +1,6 @@
 #include <game/g_game.h>
 #include <game/g_private.h>
+#include <common/c_terminal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,7 +15,7 @@ void G_LoadTranslation(game_t *game, const char *path) {
   FILE *f = fopen(base_path, "r");
 
   if (!f) {
-    printf("[ERROR] The localization file `%s`|`%s` doesn't seem to exist (skill "
+    printf(LOG_ERROR "The localization file `%s`|`%s` doesn't seem to exist (skill "
            "issue).\n",
            path, base_path);
     return;
@@ -71,7 +72,7 @@ void G_LoadTranslation(game_t *game, const char *path) {
           localization->translations[j] = zpl_alloc(allocator, sizeof(char *) * language_capacity);
         }
 
-        printf("[VERBOSE] Translation file `%s` contains %d languages.\n", path, language_count);
+        printf(LOG_VERBOSE "Translation file `%s` contains %d languages.\n", path, language_count);
       }
 
       unsigned line_len = strlen(tmp_line);
@@ -105,7 +106,7 @@ void G_LoadTranslation(game_t *game, const char *path) {
       current_line++;
 
       if (current_line == language_capacity) {
-        printf("[ERROR] This is NOT supposed to happen.\n");
+        printf(LOG_ERROR "This is NOT supposed to happen.\n");
         exit(-1);
         return;
       }

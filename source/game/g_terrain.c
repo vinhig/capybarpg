@@ -1,5 +1,5 @@
+#include <common/c_terminal.h>
 #include <game/g_private.h>
-
 #include <jps.h>
 #include <string.h>
 
@@ -62,10 +62,10 @@ void G_Map_SetTerrainType_QC(qcvm_t *qcvm) {
   const char *recipe = qcvm_get_parm_string(qcvm, 3);
 
   if (map < 0 || map >= (int)game->current_scene->map_count) {
-    printf("[ERROR] Assertion G_Map_SetTerrainType(map >= 0 || map < "
-           "game->map_count) "
-           "[map = %d, map_count = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_Map_SetTerrainType(map >= 0 || map < "
+                     "game->map_count) "
+                     "[map = %d, map_count = %d] should be "
+                     "verified.\n",
            map, game->current_scene->map_count);
     return;
   }
@@ -73,19 +73,19 @@ void G_Map_SetTerrainType_QC(qcvm_t *qcvm) {
   map_t *the_map = &game->current_scene->maps[map];
 
   if (x < 0.0f || x >= the_map->w) {
-    printf("[ERROR] Assertion G_Map_SetTerrainType(x >= 0 || x < "
-           "map->w) "
-           "[x = %d, map->w = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_Map_SetTerrainType(x >= 0 || x < "
+                     "map->w) "
+                     "[x = %d, map->w = %d] should be "
+                     "verified.\n",
            (unsigned)x, the_map->w);
     return;
   }
 
   if (y < 0.0f || y >= the_map->h) {
-    printf("[ERROR] Assertion G_Map_SetTerrainType(y >= 0 || y < "
-           "map->y) "
-           "[y = %d, map->h = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_Map_SetTerrainType(y >= 0 || y < "
+                     "map->y) "
+                     "[y = %d, map->h = %d] should be "
+                     "verified.\n",
            (unsigned)y, the_map->h);
     return;
   }
@@ -94,9 +94,9 @@ void G_Map_SetTerrainType_QC(qcvm_t *qcvm) {
   terrain_t *the_recipe = G_Terrains_get(&game->terrain_bank, key);
 
   if (!the_recipe) {
-    printf("[ERROR] Assertion G_Map_SetTerrainType(recipe exists) [recipe = "
-           "\"%s\"] "
-           "should be verified.\n",
+    printf(LOG_ERROR "Assertion G_Map_SetTerrainType(recipe exists) [recipe = "
+                     "\"%s\"] "
+                     "should be verified.\n",
            recipe);
     return;
   }
@@ -125,10 +125,10 @@ void G_Map_GetTerrainType_QC(qcvm_t *qcvm) {
   float y = qcvm_get_parm_float(qcvm, 2);
 
   if (map < 0 || map >= (int)game->current_scene->map_count) {
-    printf("[ERROR] Assertion G_Map_GetTerrainType_QC(map >= 0 || map < "
-           "game->map_count) "
-           "[map = %d, map_count = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_Map_GetTerrainType_QC(map >= 0 || map < "
+                     "game->map_count) "
+                     "[map = %d, map_count = %d] should be "
+                     "verified.\n",
            map, game->current_scene->map_count);
     return;
   }
@@ -136,19 +136,19 @@ void G_Map_GetTerrainType_QC(qcvm_t *qcvm) {
   map_t *the_map = &game->current_scene->maps[map];
 
   if (x < 0.0f || x >= the_map->w) {
-    printf("[ERROR] Assertion G_Map_GetTerrainType_QC(x >= 0 || x < "
-           "map->w) "
-           "[x = %d, map->w = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_Map_GetTerrainType_QC(x >= 0 || x < "
+                     "map->w) "
+                     "[x = %d, map->w = %d] should be "
+                     "verified.\n",
            (unsigned)x, the_map->w);
     return;
   }
 
   if (y < 0.0f || y >= the_map->h) {
-    printf("[ERROR] Assertion G_Map_GetTerrainType_QC(y >= 0 || y < "
-           "map->y) "
-           "[y = %d, map->h = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_Map_GetTerrainType_QC(y >= 0 || y < "
+                     "map->y) "
+                     "[y = %d, map->h = %d] should be "
+                     "verified.\n",
            (unsigned)y, the_map->h);
     return;
   }
@@ -298,16 +298,16 @@ void G_Map_AddWall_QC(qcvm_t *qcvm) {
   zpl_unused(to_build);
 
   if (health <= 0.0f) {
-    printf("[ERROR] Assertion G_Map_AddWall_QC(health > 0.0) [health = %f] should "
-           "be verified.\n",
+    printf(LOG_ERROR "Assertion G_Map_AddWall_QC(health > 0.0) [health = %f] should "
+                     "be verified.\n",
            health);
     return;
   }
 
   if (map < 0 || map >= (int)game->current_scene->map_count) {
-    printf("[ERROR] Assertion G_Map_AddWall_QC(map >= 0 || map < game->map_count) "
-           "[map = %d, map_count = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_Map_AddWall_QC(map >= 0 || map < game->map_count) "
+                     "[map = %d, map_count = %d] should be "
+                     "verified.\n",
            map, game->current_scene->map_count);
     return;
   }
@@ -318,26 +318,26 @@ void G_Map_AddWall_QC(qcvm_t *qcvm) {
   wall_t *the_wall = G_Walls_get(&game->wall_bank, key);
 
   if (!the_wall) {
-    printf("[ERROR] Assertion G_Map_AddWall_QC(recipe exists) [recipe = \"%s\"] "
-           "should be verified.\n",
+    printf(LOG_ERROR "Assertion G_Map_AddWall_QC(recipe exists) [recipe = \"%s\"] "
+                     "should be verified.\n",
            recipe);
     return;
   }
 
   if (x < 0.0f || x >= the_map->w) {
-    printf("[ERROR] Assertion G_Map_AddWall_QC(x >= 0 || x < "
-           "map->w) "
-           "[x = %d, map->w = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_Map_AddWall_QC(x >= 0 || x < "
+                     "map->w) "
+                     "[x = %d, map->w = %d] should be "
+                     "verified.\n",
            (unsigned)x, the_map->w);
     return;
   }
 
   if (y < 0.0f || y >= the_map->h) {
-    printf("[ERROR] Assertion G_Map_AddWall_QC(y >= 0 || y < "
-           "map->h) "
-           "[y = %d, map->h = %d] should be "
-           "verified.\n",
+    printf(LOG_ERROR "Assertion G_Map_AddWall_QC(y >= 0 || y < "
+                     "map->h) "
+                     "[y = %d, map->h = %d] should be "
+                     "verified.\n",
            (unsigned)x, the_map->h);
     return;
   }

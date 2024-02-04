@@ -23,7 +23,6 @@ add_global_arguments(
   language: 'cpp',
 )
 
-
 cc = meson.get_compiler('c')
 m = cc.find_library('m', required : false)
 dl = cc.find_library('dl', required : false)
@@ -44,7 +43,7 @@ endif
 
 glsllang = find_program('glslangValidator')
 
-vcc = find_program('vcc')
+# vcc = find_program('vcc')
 
 # chad_shader_targets = []
 

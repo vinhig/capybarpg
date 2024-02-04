@@ -3,11 +3,15 @@
 #include "client/cl_client.h"
 #include "client/cl_input.h"
 #include "game/g_game.h"
-#include "qcvm.h"
+#include "qcvm/qcvm.h"
 #include <SDL2/SDL.h>
 #include <game/g_private.h>
 #include <stdio.h>
 #include <string.h>
+
+ZPL_TABLE_DECLARE(extern, string_dict_t, CL_Strings_, short_string_t)
+ZPL_TABLE_DECLARE(extern, float_dict_t, CL_Floats_, float)
+ZPL_TABLE_DECLARE(extern, int_dict_t, CL_Integers_, int)
 
 static inline __attribute__((always_inline)) char *UI_Translation(game_t *game, unsigned idx) {
   if (idx >= game->localization->entry_count) {
@@ -24,16 +28,17 @@ unsigned Current_Button_Image_In_Wheel = 0;
 void UI_Begin_Menu_QC(qcvm_t *qcvm) {
   game_t *game = qcvm_get_user_data(qcvm);
 
-  const char *style = qcvm_get_parm_string(qcvm, 0);
+  const char *label = qcvm_get_parm_string(qcvm, 0);
+  const char *id = qcvm_get_parm_string(qcvm, 1);
 
   unsigned screen_width, screen_height;
   CL_GetViewDim(game->client, &screen_width, &screen_height);
 
-  strcpy(&game->current_ui_style[0], style);
+  strcpy(&game->current_window_id[0], id);
 
-  ImGuiWindowFlags flags = 0;
+  ImGuiWindowFlags flags = ImGuiWindowFlags_NoSavedSettings;
 
-  if (strcmp(style, "main_menu") == 0) {
+  if (strcmp(id, "main_menu") == 0) {
     ImGui_SetNextWindowBgAlpha(0.0f);
     ImGui_SetNextWindowSize((ImVec2){256.0, 1000.0}, ImGuiCond_Once);
     ImGui_SetNextWindowPos((ImVec2){64, ((float)screen_height / 2.0) - (400.0 / 2.0)}, ImGuiCond_Once);
@@ -43,9 +48,9 @@ void UI_Begin_Menu_QC(qcvm_t *qcvm) {
             ImGuiWindowFlags_NoSavedSettings;
 
     ImGui_PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui_Begin(style, NULL, flags);
+    ImGui_Begin(label, NULL, flags);
     ImGui_PopStyleVar();
-  } else if (strcmp(style, "settings_menu") == 0) {
+  } else if (strcmp(id, "settings_menu") == 0) {
     ImGui_SetNextWindowBgAlpha(0.4f);
     ImGui_SetNextWindowSize((ImVec2){(float)screen_width / 2.0f + 64.0f, 400.0f}, ImGuiCond_Once);
     ImGui_SetNextWindowPos((ImVec2){400.0f, ((float)screen_height / 2.0) - (400.0f / 2.0)}, ImGuiCond_Once);
@@ -54,9 +59,9 @@ void UI_Begin_Menu_QC(qcvm_t *qcvm) {
             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysVerticalScrollbar;
 
     ImGui_PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
-    ImGui_Begin(style, NULL, flags);
+    ImGui_Begin(label, NULL, flags);
     ImGui_PopStyleVar();
-  } else if (strcmp(style, "settings_menu_apply") == 0) {
+  } else if (strcmp(id, "settings_menu_apply") == 0) {
     ImGui_SetNextWindowBgAlpha(0.4f);
     ImGui_SetNextWindowSize((ImVec2){(float)screen_width / 2.0f + 64.0f, 64.0f}, ImGuiCond_Appearing);
     ImGui_SetNextWindowPos((ImVec2){400.0f, ((float)screen_height / 2.0) - (400.0f / 2.0) + 400.0f}, ImGuiCond_Appearing);
@@ -65,9 +70,9 @@ void UI_Begin_Menu_QC(qcvm_t *qcvm) {
             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar;
 
     ImGui_PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
-    ImGui_Begin(style, NULL, flags);
+    ImGui_Begin(label, NULL, flags);
     ImGui_PopStyleVar();
-  } else if (strcmp(style, "wheel_tools_menu") == 0) {
+  } else if (strcmp(id, "wheel_tools_menu") == 0) {
     float pos_x, pos_y;
     pos_x = (float)CL_GetInput(game->client)->mouse_x - 128.0f;
     pos_y = (float)CL_GetInput(game->client)->mouse_y - 128.0f;
@@ -99,14 +104,29 @@ void UI_Begin_Menu_QC(qcvm_t *qcvm) {
     ImGui_SetNextWindowSize((ImVec2){256.0f, 256.0f}, ImGuiCond_Appearing);
     ImGui_SetNextWindowPos((ImVec2){pos_x, pos_y}, ImGuiCond_Appearing);
 
-    ImGui_Begin(style, NULL, flags);
+    ImGui_Begin(label, NULL, flags);
 
     ImGui_PopStyleVar();
     ImGui_PopStyleVar();
 
     Current_Button_Image_In_Wheel = 0;
   } else {
-    ImGui_Begin("don't care", NULL, flags);
+    // TODO: not even sure this is legal...
+    zpl_u64 key = zpl_fnv64(id, strlen(id));
+
+    int_dict_t *dict = CL_GetIntegerlobalVariables(game->client);
+    int *opened = CL_Integers_get(dict, key);
+
+    if (!opened) {
+      CL_Integers_set(dict, key, 1);
+    }
+
+    bool opened_bool = *opened;
+    ImGui_Begin(label, &opened_bool, flags);
+
+    if ((bool)opened != opened_bool) {
+      CL_Integers_set(dict, key, opened_bool);
+    }
   }
 }
 
@@ -115,7 +135,7 @@ void UI_End_Menu_QC(qcvm_t *qcvm) {
 
   ImGui_End();
 
-  strcpy(&game->current_ui_style[0], "");
+  strcpy(&game->current_window_id[0], "");
 }
 
 void UI_Text(const char *label) {
@@ -152,11 +172,11 @@ bool UI_Button(game_t *game, const char *label, bool enabled) {
 
   bool clicked = false;
 
-  if (strcmp(game->current_ui_style, "main_menu") == 0) {
+  if (strcmp(game->current_window_id, "main_menu") == 0) {
     clicked = ImGui_ButtonEx(label, (ImVec2){ImGui_GetContentRegionAvail().x, 56.0f});
-  } else if (strcmp(game->current_ui_style, "settings_menu") == 0) {
+  } else if (strcmp(game->current_window_id, "settings_menu") == 0) {
     clicked = ImGui_ButtonEx(label, (ImVec2){ImGui_GetContentRegionAvail().x, 32.0f});
-  } else if (strcmp(game->current_ui_style, "settings_menu_apply") == 0) {
+  } else if (strcmp(game->current_window_id, "settings_menu_apply") == 0) {
     ImGui_SameLine();
     ImGui_SetCursorPosY(16.0f);
     clicked = ImGui_Button(label);
@@ -182,7 +202,7 @@ void UI_Button_QC(qcvm_t *qcvm) {
 }
 
 bool UI_CheckBox(game_t *game, const char *label, bool value) {
-  if (strcmp(game->current_ui_style, "settings_menu") == 0) {
+  if (strcmp(game->current_window_id, "settings_menu") == 0) {
     int total_w = ImGui_GetContentRegionAvail().x;
     ImGui_Text("%s", label);
     ImGui_SameLineEx(total_w - 32.0f, 0.0f);
@@ -215,7 +235,7 @@ bool UI_Begin_Select(game_t *game, const char *label, const char *original_value
 
   bool r = false;
 
-  if (strcmp(game->current_ui_style, "settings_menu") == 0) {
+  if (strcmp(game->current_window_id, "settings_menu") == 0) {
     int total_w = ImGui_GetContentRegionAvail().x;
     ImGui_Text("%s", label);
     ImGui_SameLineEx(total_w / 2.0, 0.0);
@@ -431,48 +451,54 @@ void UI_ButtonImage_QC(qcvm_t *qcvm) {
   key = zpl_fnv64(tex_hover_id, strlen(tex_hover_id));
   image_ui_t *image_hover = G_Images_get(&game->image_bank, key);
 
-  ImGui_SetItemAllowOverlap();
+  if (strcmp(game->current_window_id, "wheel_tools_menu") == 0) {
+    ImGui_SetItemAllowOverlap();
 
-  ImGui_SetCursorPosX(offsets_wheel_menu[Current_Button_Image_In_Wheel].x - 8.0f);
-  ImGui_SetCursorPosY(offsets_wheel_menu[Current_Button_Image_In_Wheel].y - 8.0f);
+    ImGui_SetCursorPosX(offsets_wheel_menu[Current_Button_Image_In_Wheel].x - 8.0f);
+    ImGui_SetCursorPosY(offsets_wheel_menu[Current_Button_Image_In_Wheel].y - 8.0f);
 
-  bool r = ImGui_InvisibleButton(label, (ImVec2){64.0f, 64.0f}, 0);
+    bool r = ImGui_InvisibleButton(label, (ImVec2){64.0f, 64.0f}, 0);
 
-  bool is_hovered = ImGui_IsItemHovered(0);
-  bool is_clicked = CL_GetInput(game->client)->mouse_left;
+    bool is_hovered = ImGui_IsItemHovered(0);
+    bool is_clicked = CL_GetInput(game->client)->mouse_left;
 
-  ImGui_SetCursorPosX(offsets_wheel_menu[Current_Button_Image_In_Wheel].x - 8.0f);
-  ImGui_SetCursorPosY(offsets_wheel_menu[Current_Button_Image_In_Wheel].y - 8.0f);
+    ImGui_SetCursorPosX(offsets_wheel_menu[Current_Button_Image_In_Wheel].x - 8.0f);
+    ImGui_SetCursorPosY(offsets_wheel_menu[Current_Button_Image_In_Wheel].y - 8.0f);
 
-  if (strcmp(game->current_ui_style, "wheel_tools_menu")) {
-    // ImGui_PopStyleVar(ImGuiStyleVar_BUt)
-  }
-
-  if (image && image_hover) {
-    if (is_hovered) {
-      if (is_clicked) {
-        ImGui_Image((ImTextureID)image_hover->imgui_id, (ImVec2){64.0f + 16.0f, 64.0f + 16.0f});
-        // r = true;
+    if (image && image_hover) {
+      if (is_hovered) {
+        if (is_clicked) {
+          ImGui_Image((ImTextureID)image_hover->imgui_id, (ImVec2){64.0f + 16.0f, 64.0f + 16.0f});
+        } else {
+          ImGui_Image((ImTextureID)image->imgui_id, (ImVec2){64.0f + 16.0f, 64.0f + 16.0f});
+        }
+        ImGui_SetTooltip("%s", label);
       } else {
-        ImGui_Image((ImTextureID)image->imgui_id, (ImVec2){64.0f + 16.0f, 64.0f + 16.0f});
+        ImGui_Image((ImTextureID)image_hover->imgui_id, (ImVec2){64.0f + 16.0f, 64.0f + 16.0f});
       }
+    }
 
-    } else {
-      ImGui_Image((ImTextureID)image_hover->imgui_id, (ImVec2){64.0f + 16.0f, 64.0f + 16.0f});
+    Current_Button_Image_In_Wheel++;
+    qcvm_return_int(qcvm, r);
+  } else {
+    qcvm_return_int(qcvm, ImGui_ImageButton(label, (ImTextureID)image->imgui_id, (ImVec2){64.0f, 64.0f}));
+
+    if (ImGui_IsItemHovered(0)) {
+      ImGui_SetTooltip("%s", label);
     }
   }
+}
 
-  Current_Button_Image_In_Wheel++;
-
-  qcvm_return_int(qcvm, r);
+void UI_List_Facilities_QC(qcvm_t *qcvm) {
 }
 
 void G_UIInstall(qcvm_t *qcvm) {
   qcvm_export_t export_UI_Begin_Menu = {
       .func = UI_Begin_Menu_QC,
       .name = "UI_Begin_Menu",
-      .argc = 1,
-      .args[0] = {.name = "style", .type = QCVM_STRING},
+      .argc = 2,
+      .args[0] = {.name = "label", .type = QCVM_STRING},
+      .args[1] = {.name = "id", .type = QCVM_STRING},
   };
 
   qcvm_export_t export_UI_End_Menu = {
@@ -671,6 +697,14 @@ void G_UIInstall(qcvm_t *qcvm) {
       .type = QCVM_INT,
   };
 
+  qcvm_export_t export_UI_List_Facilities = {
+      .func = UI_List_Facilities_QC,
+      .name = "UI_List_Facilities",
+      .argc = 2,
+      .args[0] = {.name = "label", .type = QCVM_STRING},
+      .args[1] = {.name = "...", .type = QCVM_VARGS},
+  };
+
   qcvm_add_export(qcvm, &export_UI_Begin_Menu);
   qcvm_add_export(qcvm, &export_UI_End_Menu);
   qcvm_add_export(qcvm, &export_UI_Text);
@@ -701,4 +735,5 @@ void G_UIInstall(qcvm_t *qcvm) {
   qcvm_add_export(qcvm, &export_UI_OptionLocalized);
 
   qcvm_add_export(qcvm, &export_UI_ButtonImage);
+  qcvm_add_export(qcvm, &export_UI_List_Facilities);
 }

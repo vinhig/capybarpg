@@ -1,11 +1,13 @@
 #pragma once
 
+#include <cglm/types.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <wchar.h>
 
-#include "cglm/types.h"
+#define MAX_NUMBER_OF_RECIPES 8
+#define MAX_NUMBER_OF_TAGS 16
 
 typedef struct client_t client_t;
 
@@ -164,9 +166,49 @@ typedef struct wall_t {
 typedef struct image_ui_t {
   unsigned revision;
   void *imgui_id;
-  char* path;
-  char* label;
+  char *path;
+  char *label;
 } image_ui_t;
+
+typedef struct recipe_t {
+  unsigned work_amount;
+  int bonus_health;
+
+  struct {
+    material_t *material;
+    unsigned amount;
+  } materials[8];
+  unsigned material_count;
+} recipe_t;
+
+typedef struct tag_t {
+  const char *label;
+  unsigned long int key;
+} tag_t;
+
+typedef struct facility_t {
+  char *name;
+
+  float scale;
+  unsigned revision;
+
+  unsigned north_tex;
+  char *north_path;
+
+  unsigned south_tex;
+  char *south_path;
+
+  unsigned east_tex;
+  char *east_path;
+
+  int base_health;
+
+  tag_t tags[MAX_NUMBER_OF_TAGS];
+  unsigned tag_count;
+
+  recipe_t available_recipes[MAX_NUMBER_OF_RECIPES];
+  unsigned available_recipe_count;
+} facility_t;
 
 /// @brief Create a new game, allocating the memory for it. Read `main.toml`
 /// from the given base folder, and set it as the current scene. No assets

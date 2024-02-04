@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <zpl/zpl.h>
+#include <common/c_terminal.h>
 
 ZPL_RING_DECLARE(extern, jobs_ring_, job_t);
 ZPL_RING_DEFINE(jobs_ring_, job_t);
@@ -58,7 +59,7 @@ long C_JobEntryPoint(struct zpl_thread *thread) {
 
 job_system_t *C_JobSystemCreate(unsigned max_threads) {
   if (max_threads > 32) {
-    printf("[ERROR] A maximum of 32 threads per job system.\n");
+    printf(LOG_ERROR "A maximum of 32 threads per job system.\n");
     return NULL;
   }
   job_system_t *system = calloc(1, sizeof(job_system_t));
